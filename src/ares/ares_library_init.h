@@ -22,6 +22,12 @@
 
 #ifdef USE_WINSOCK
 
+#ifdef __MINGW64__
+typedef int MIB_TCP_STATE;
+#include "traffic.h"
+#include "naptypes.h"
+#endif
+
 #include <iphlpapi.h>
 #include "ares_iphlpapi.h"
 

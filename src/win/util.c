@@ -30,6 +30,12 @@
 #include "internal.h"
 #include "tlhelp32.h"
 #include "psapi.h"
+#ifdef __MINGW64__
+/* FIXME: MinGW64 doesn't declare MIB_TCP_STATE as enum */
+typedef int MIB_TCP_STATE; 
+#include "traffic.h"
+#include "naptypes.h"
+#endif
 #include "iphlpapi.h"
 
 
