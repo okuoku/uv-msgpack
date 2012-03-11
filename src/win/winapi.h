@@ -4335,7 +4335,7 @@ typedef NTSTATUS (NTAPI *sNtSetInformationFile)
 # define SYMBOLIC_LINK_FLAG_DIRECTORY 0x1
 #endif
 
-#ifdef __MINGW32__
+#if defined(__MINGW32__) && !defined(__MINGW64__)
   typedef struct _OVERLAPPED_ENTRY {
       ULONG_PTR lpCompletionKey;
       LPOVERLAPPED lpOverlapped;
