@@ -109,7 +109,7 @@ out:
       assert(pipe_fname != NULL);
       unlink(pipe_fname);
     }
-    uv__close(sockfd);
+    close(sockfd);
 
     free((void*)pipe_fname);
   }
@@ -146,34 +146,26 @@ out:
 }
 
 
-int uv_pipe_cleanup(uv_pipe_t* handle) {
-  int saved_errno;
-  int status;
-
-  saved_errno = errno;
-  status = -1;
-
+void uv__pipe_close(uv_pipe_t* handle) {
   if (handle->pipe_fname) {
     /*
      * Unlink the file system entity before closing the file descriptor.
      * Doing it the other way around introduces a race where our process
      * unlinks a socket with the same name that's just been created by
      * another thread or process.
-     *
-     * This is less of an issue now that we attach a file lock
-     * to the socket but it's still a best practice.
      */
     unlink(handle->pipe_fname);
     free((void*)handle->pipe_fname);
   }
 
-  errno = saved_errno;
-  return status;
+  uv__stream_close((uv_stream_t*)handle);
 }
 
 
 void uv_pipe_open(uv_pipe_t* handle, uv_file fd) {
-  uv__stream_open((uv_stream_t*)handle, fd, UV_READABLE | UV_WRITABLE);
+  uv__stream_open((uv_stream_t*)handle,
+                  fd,
+                  UV_STREAM_READABLE | UV_STREAM_WRITABLE);
 }
 
 
@@ -210,11 +202,13 @@ void uv_pipe_connect(uv_connect_t* req,
 
   if (r == -1) {
     status = errno;
-    uv__close(sockfd);
+    close(sockfd);
     goto out;
   }
 
-  uv__stream_open((uv_stream_t*)handle, sockfd, UV_READABLE | UV_WRITABLE);
+  uv__stream_open((uv_stream_t*)handle,
+                  sockfd,
+                  UV_STREAM_READABLE | UV_STREAM_WRITABLE);
 
   ev_io_start(handle->loop->ev, &handle->read_watcher);
   ev_io_start(handle->loop->ev, &handle->write_watcher);
@@ -254,16 +248,15 @@ void uv__pipe_accept(EV_P_ ev_io* watcher, int revents) {
 
   sockfd = uv__accept(pipe->fd, (struct sockaddr *)&saddr, sizeof saddr);
   if (sockfd == -1) {
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      assert(0 && "EAGAIN on uv__accept(pipefd)");
-    } else {
+    if (errno != EAGAIN && errno != EWOULDBLOCK) {
       uv__set_sys_error(pipe->loop, errno);
+      pipe->connection_cb((uv_stream_t*)pipe, -1);
     }
   } else {
     pipe->accepted_fd = sockfd;
     pipe->connection_cb((uv_stream_t*)pipe, 0);
     if (pipe->accepted_fd == sockfd) {
-      /* The user hasn't yet accepted called uv_accept() */
+      /* The user hasn't called uv_accept() yet */
       ev_io_stop(pipe->loop->ev, &pipe->read_watcher);
     }
   }

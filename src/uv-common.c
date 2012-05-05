@@ -32,6 +32,25 @@
 #include "ares/inet_net_pton.h"
 #include "ares/inet_ntop.h"
 
+#define XX(uc, lc) case UV_##uc: return sizeof(uv_##lc##_t);
+
+size_t uv_handle_size(uv_handle_type type) {
+  switch (type) {
+    UV_HANDLE_TYPE_MAP(XX)
+    default:
+      return -1;
+  }
+}
+
+size_t uv_req_size(uv_req_type type) {
+  switch(type) {
+    UV_REQ_TYPE_MAP(XX)
+    default:
+      return -1;
+  }
+}
+
+#undef XX
 
 size_t uv_strlcpy(char* dst, const char* src, size_t size) {
   size_t n;
@@ -180,56 +199,42 @@ int uv_ip6_name(struct sockaddr_in6* src, char* dst, size_t size) {
 }
 
 
-/* find matching ares handle in list */
+static int cmp_ares_tasks(const uv_ares_task_t* a, const uv_ares_task_t* b) {
+  if (a->sock < b->sock) return -1;
+  if (a->sock > b->sock) return 1;
+  return 0;
+}
+
+
+RB_GENERATE_STATIC(uv__ares_tasks, uv_ares_task_s, node, cmp_ares_tasks)
+
+
+/* add ares handle to list */
 void uv_add_ares_handle(uv_loop_t* loop, uv_ares_task_t* handle) {
-  handle->loop = loop;
-  handle->ares_next = loop->uv_ares_handles_;
-  handle->ares_prev = NULL;
-
-  if (loop->uv_ares_handles_) {
-    loop->uv_ares_handles_->ares_prev = handle;
-  }
-
-  loop->uv_ares_handles_ = handle;
+  assert(loop == handle->loop);
+  RB_INSERT(uv__ares_tasks, &loop->uv_ares_handles_, handle);
 }
+
 
 /* find matching ares handle in list */
-/* TODO: faster lookup */
 uv_ares_task_t* uv_find_ares_handle(uv_loop_t* loop, ares_socket_t sock) {
-  uv_ares_task_t* handle = loop->uv_ares_handles_;
-
-  while (handle != NULL) {
-    if (handle->sock == sock) {
-      break;
-    }
-    handle = handle->ares_next;
-  }
-
-  return handle;
+  uv_ares_task_t handle;
+  handle.sock = sock;
+  return RB_FIND(uv__ares_tasks, &loop->uv_ares_handles_, &handle);
 }
+
 
 /* remove ares handle in list */
 void uv_remove_ares_handle(uv_ares_task_t* handle) {
-  uv_loop_t* loop = handle->loop;
-
-  if (handle == loop->uv_ares_handles_) {
-    loop->uv_ares_handles_ = handle->ares_next;
-  }
-
-  if (handle->ares_next) {
-    handle->ares_next->ares_prev = handle->ares_prev;
-  }
-
-  if (handle->ares_prev) {
-    handle->ares_prev->ares_next = handle->ares_next;
-  }
+  RB_REMOVE(uv__ares_tasks, &handle->loop->uv_ares_handles_, handle);
 }
 
 
 /* Returns 1 if the uv_ares_handles_ list is empty. 0 otherwise. */
 int uv_ares_handles_empty(uv_loop_t* loop) {
-  return loop->uv_ares_handles_ ? 0 : 1;
+  return RB_EMPTY(&loop->uv_ares_handles_);
 }
+
 
 int uv_tcp_bind(uv_tcp_t* handle, struct sockaddr_in addr) {
   if (handle->type != UV_TCP || addr.sin_family != AF_INET) {
@@ -240,6 +245,7 @@ int uv_tcp_bind(uv_tcp_t* handle, struct sockaddr_in addr) {
   return uv__tcp_bind(handle, addr);
 }
 
+
 int uv_tcp_bind6(uv_tcp_t* handle, struct sockaddr_in6 addr) {
   if (handle->type != UV_TCP || addr.sin6_family != AF_INET6) {
     uv__set_artificial_error(handle->loop, UV_EFAULT);
@@ -248,6 +254,7 @@ int uv_tcp_bind6(uv_tcp_t* handle, struct sockaddr_in6 addr) {
 
   return uv__tcp_bind6(handle, addr);
 }
+
 
 int uv_udp_bind(uv_udp_t* handle, struct sockaddr_in addr,
     unsigned int flags) {
@@ -259,6 +266,7 @@ int uv_udp_bind(uv_udp_t* handle, struct sockaddr_in addr,
   return uv__udp_bind(handle, addr, flags);
 }
 
+
 int uv_udp_bind6(uv_udp_t* handle, struct sockaddr_in6 addr,
     unsigned int flags) {
   if (handle->type != UV_UDP || addr.sin6_family != AF_INET6) {
@@ -268,6 +276,7 @@ int uv_udp_bind6(uv_udp_t* handle, struct sockaddr_in6 addr,
 
   return uv__udp_bind6(handle, addr, flags);
 }
+
 
 int uv_tcp_connect(uv_connect_t* req,
                    uv_tcp_t* handle,
@@ -280,6 +289,7 @@ int uv_tcp_connect(uv_connect_t* req,
 
   return uv__tcp_connect(req, handle, address, cb);
 }
+
 
 int uv_tcp_connect6(uv_connect_t* req,
                     uv_tcp_t* handle,

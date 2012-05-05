@@ -98,6 +98,7 @@ set(UV_WIN32_SRCS
     src/win/loop-watcher.c
     src/win/pipe.c
     src/win/thread.c
+    src/win/poll.c
     src/win/process.c
     src/win/req.c
     src/win/stream.c
@@ -118,16 +119,10 @@ set(UV_POSIX_SRCS
     # include/uv-private/ev.h
     # include/uv-private/ngx-queue.h
     # include/uv-private/uv-unix.h
-    src/unix/core.c
-    src/unix/uv-eio.c
-    # src/unix/uv-eio.h
-    src/unix/fs.c
-    src/unix/udp.c
-    src/unix/tcp.c
-    src/unix/pipe.c
-    src/unix/tty.c
-    src/unix/stream.c
+    src/unix/async.c
     src/unix/cares.c
+    src/unix/check.c
+    src/unix/core.c
     src/unix/dl.c
     src/unix/error.c
     src/unix/thread.c
@@ -136,10 +131,26 @@ set(UV_POSIX_SRCS
     # src/unix/eio/ecb.h
     src/unix/eio/eio.c
     # src/unix/eio/xthread.h
+    src/unix/error.c
     src/unix/ev/ev.c
     # src/unix/ev/ev_vars.h
     # src/unix/ev/ev_wrap.h
     # src/unix/ev/event.h
+    src/unix/fs.c
+    src/unix/idle.c
+    # src/unix/internal.h
+    src/unix/loop.c
+    src/unix/pipe.c
+    src/unix/poll.c
+    src/unix/prepare.c
+    src/unix/process.c
+    src/unix/tcp.c
+    src/unix/thread.c
+    src/unix/timer.c
+    src/unix/tty.c
+    src/unix/udp.c
+    src/unix/uv-eio.c
+    # src/unix/uv-eio.h
     )
 
 set(UV_TEST_SRCS
@@ -178,6 +189,7 @@ set(UV_TEST_SRCS
     test/test-pipe-bind-error.c
     test/test-pipe-connect-error.c
     test/test-platform-output.c
+    test/test-poll.c
     test/test-process-title.c
     test/test-ref.c
     test/test-shutdown-close.c
@@ -247,7 +259,10 @@ else()
     # OS specific thingy
     # FIXME: solaris here
     if(APPLE)
-        add_definitions(-DEV_CONFIG_H=\"config_darwin.h\" -DEIO_CONFIG_H=\"config_darwin.h\")
+        add_definitions(
+            -D_DARWIN_USE_64_BIT_INODE=1
+            -DEV_CONFIG_H=\"config_darwin.h\"
+            -DEIO_CONFIG_H=\"config_darwin.h\")
         include_directories(src/ares/config_darwin)
         set(UV_SRCS
             ${UV_POSIX_SRCS}
@@ -262,7 +277,10 @@ else()
             ${UV_POSIX_SRCS}
             ${UV_COMMON_SRCS}
             src/unix/linux/core.c
-            src/unix/linux/inotify.c)
+            src/unix/linux/inotify.c
+            src/unix/linux/syscalls.c
+            # src/unix/linux/syscalls.h
+            )
         set(UV_LIBS rt m dl)
     elseif(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
         add_definitions(-DEV_CONFIG_H=\"config_freebsd.h\" -DEIO_CONFIG_H=\"config_freebsd.h\")

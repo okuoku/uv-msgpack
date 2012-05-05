@@ -1,5 +1,4 @@
 /* Copyright Joyent, Inc. and other Node contributors. All rights reserved.
- *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
  * deal in the Software without restriction, including without limitation the
@@ -22,61 +21,59 @@
 #include "uv.h"
 #include "internal.h"
 
-#include <dlfcn.h>
-#include <errno.h>
-#include <string.h>
-#include <locale.h>
 
-static int uv__dlerror(uv_lib_t* lib);
+static void uv__prepare(EV_P_ ev_prepare* w, int revents) {
+  uv_prepare_t* prepare = container_of(w, uv_prepare_t, prepare_watcher);
 
-
-int uv_dlopen(const char* filename, uv_lib_t* lib) {
-  lib->errmsg = NULL;
-  lib->handle = dlopen(filename, RTLD_LAZY);
-  return uv__dlerror(lib);
-}
-
-
-void uv_dlclose(uv_lib_t* lib) {
-  if (lib->errmsg) {
-    free(lib->errmsg);
-    lib->errmsg = NULL;
-  }
-
-  if (lib->handle) {
-    /* Ignore errors. No good way to signal them without leaking memory. */
-    dlclose(lib->handle);
-    lib->handle = NULL;
+  if (prepare->prepare_cb) {
+    prepare->prepare_cb(prepare, 0);
   }
 }
 
 
-int uv_dlsym(uv_lib_t* lib, const char* name, void** ptr) {
-  dlerror(); /* Reset error status. */
-  *ptr = dlsym(lib->handle, name);
-  return uv__dlerror(lib);
+int uv_prepare_init(uv_loop_t* loop, uv_prepare_t* prepare) {
+  uv__handle_init(loop, (uv_handle_t*)prepare, UV_PREPARE);
+  loop->counters.prepare_init++;
+
+  ev_prepare_init(&prepare->prepare_watcher, uv__prepare);
+  prepare->prepare_cb = NULL;
+
+  return 0;
 }
 
 
-const char* uv_dlerror(uv_lib_t* lib) {
-  return lib->errmsg ? lib->errmsg : "no error";
+int uv_prepare_start(uv_prepare_t* prepare, uv_prepare_cb cb) {
+  int was_active = ev_is_active(&prepare->prepare_watcher);
+
+  prepare->prepare_cb = cb;
+
+  ev_prepare_start(prepare->loop->ev, &prepare->prepare_watcher);
+
+  if (!was_active) {
+    ev_unref(prepare->loop->ev);
+  }
+
+  return 0;
 }
 
 
-static int uv__dlerror(uv_lib_t* lib) {
-  char* errmsg;
+int uv_prepare_stop(uv_prepare_t* prepare) {
+  int was_active = ev_is_active(&prepare->prepare_watcher);
 
-  if (lib->errmsg)
-    free(lib->errmsg);
+  ev_prepare_stop(prepare->loop->ev, &prepare->prepare_watcher);
 
-  errmsg = dlerror();
-
-  if (errmsg) {
-    lib->errmsg = strdup(errmsg);
-    return -1;
+  if (was_active) {
+    ev_ref(prepare->loop->ev);
   }
-  else {
-    lib->errmsg = NULL;
-    return 0;
-  }
+  return 0;
+}
+
+
+int uv__prepare_active(const uv_prepare_t* handle) {
+  return ev_is_active(&handle->prepare_watcher);
+}
+
+
+void uv__prepare_close(uv_prepare_t* handle) {
+  uv_prepare_stop(handle);
 }

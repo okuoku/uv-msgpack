@@ -19,23 +19,49 @@
  * IN THE SOFTWARE.
  */
 
-#include "task.h"
 #include "uv.h"
+#include "tree.h"
+#include "internal.h"
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
 
-BENCHMARK_IMPL(sizes) {
-  LOGF("uv_shutdown_t: %u bytes\n", (unsigned int) sizeof(uv_shutdown_t));
-  LOGF("uv_write_t: %u bytes\n", (unsigned int) sizeof(uv_write_t));
-  LOGF("uv_connect_t: %u bytes\n", (unsigned int) sizeof(uv_connect_t));
-  LOGF("uv_tcp_t: %u bytes\n", (unsigned int) sizeof(uv_tcp_t));
-  LOGF("uv_pipe_t: %u bytes\n", (unsigned int) sizeof(uv_pipe_t));
-  LOGF("uv_tty_t: %u bytes\n", (unsigned int) sizeof(uv_tty_t));
-  LOGF("uv_prepare_t: %u bytes\n", (unsigned int) sizeof(uv_prepare_t));
-  LOGF("uv_check_t: %u bytes\n", (unsigned int) sizeof(uv_check_t));
-  LOGF("uv_idle_t: %u bytes\n", (unsigned int) sizeof(uv_idle_t));
-  LOGF("uv_async_t: %u bytes\n", (unsigned int) sizeof(uv_async_t));
-  LOGF("uv_timer_t: %u bytes\n", (unsigned int) sizeof(uv_timer_t));
-  LOGF("uv_process_t: %u bytes\n", (unsigned int) sizeof(uv_process_t));
-  LOGF("uv_poll_t: %u bytes\n", (unsigned int) sizeof(uv_poll_t));
+int uv__loop_init(uv_loop_t* loop, int default_loop) {
+#if HAVE_KQUEUE
+  int flags = EVBACKEND_KQUEUE;
+#else
+  int flags = EVFLAG_AUTO;
+#endif
+  memset(loop, 0, sizeof(*loop));
+  RB_INIT(&loop->uv_ares_handles_);
+  loop->endgame_handles = NULL;
+  loop->channel = NULL;
+  loop->ev = (default_loop ? ev_default_loop : ev_loop_new)(flags);
+  ev_set_userdata(loop->ev, loop);
+  eio_channel_init(&loop->uv_eio_channel, loop);
+#if __linux__
+  RB_INIT(&loop->inotify_watchers);
+  loop->inotify_fd = -1;
+#endif
+#if HAVE_PORTS_FS
+  loop->fs_fd = -1;
+#endif
   return 0;
+}
+
+
+void uv__loop_delete(uv_loop_t* loop) {
+  uv_ares_destroy(loop, loop->channel);
+  ev_loop_destroy(loop->ev);
+#if __linux__
+  if (loop->inotify_fd == -1) return;
+  ev_io_stop(loop->ev, &loop->inotify_read_watcher);
+  close(loop->inotify_fd);
+  loop->inotify_fd = -1;
+#endif
+#if HAVE_PORTS_FS
+  if (loop->fs_fd != -1)
+    close(loop->fs_fd);
+#endif
 }

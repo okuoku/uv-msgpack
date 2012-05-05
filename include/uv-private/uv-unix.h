@@ -33,8 +33,14 @@
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <pwd.h>
 #include <termios.h>
 #include <pthread.h>
+
+#if __sun
+# include <sys/port.h>
+# include <port.h>
+#endif
 
 /* Note: May be cast to struct iovec. See writev(2). */
 typedef struct {
@@ -44,6 +50,8 @@ typedef struct {
 
 typedef int uv_file;
 
+typedef int uv_os_sock_t;
+
 #define UV_ONCE_INIT PTHREAD_ONCE_INIT
 
 typedef pthread_once_t uv_once_t;
@@ -51,9 +59,19 @@ typedef pthread_t uv_thread_t;
 typedef pthread_mutex_t uv_mutex_t;
 typedef pthread_rwlock_t uv_rwlock_t;
 
+/* Platform-specific definitions for uv_spawn support. */
+typedef gid_t uv_gid_t;
+typedef uid_t uv_uid_t;
+
 /* Platform-specific definitions for uv_dlopen support. */
-typedef void* uv_lib_t;
 #define UV_DYNAMIC /* empty */
+typedef struct {
+  void* handle;
+  char* errmsg;
+} uv_lib_t;
+
+#define UV_HANDLE_TYPE_PRIVATE /* empty */
+#define UV_REQ_TYPE_PRIVATE /* empty */
 
 #if __linux__
 # define UV_LOOP_PRIVATE_PLATFORM_FIELDS              \
@@ -63,6 +81,10 @@ typedef void* uv_lib_t;
   } inotify_watchers;                                 \
   ev_io inotify_read_watcher;                         \
   int inotify_fd;
+#elif defined(PORT_SOURCE_FILE)
+# define UV_LOOP_PRIVATE_PLATFORM_FIELDS              \
+  ev_io fs_event_watcher;                             \
+  int fs_fd;
 #else
 # define UV_LOOP_PRIVATE_PLATFORM_FIELDS
 #endif
@@ -74,10 +96,15 @@ typedef void* uv_lib_t;
    * sure that we're always calling ares_process. See the warning above the \
    * definition of ares_timeout(). \
    */ \
-  ev_timer timer; \
+  uv_timer_t timer; \
   /* Poll result queue */ \
   eio_channel uv_eio_channel; \
   struct ev_loop* ev; \
+  /* Various thing for libeio. */ \
+  uv_async_t uv_eio_want_poll_notifier; \
+  uv_async_t uv_eio_done_poll_notifier; \
+  uv_idle_t uv_eio_poller; \
+  uv_handle_t* endgame_handles; \
   UV_LOOP_PRIVATE_PLATFORM_FIELDS
 
 #define UV_REQ_BUFSML_SIZE (4)
@@ -114,7 +141,7 @@ typedef void* uv_lib_t;
 #define UV_HANDLE_PRIVATE_FIELDS \
   int fd; \
   int flags; \
-  ev_idle next_watcher;
+  uv_handle_t* endgame_next; /* that's what uv-win calls it */ \
 
 
 #define UV_STREAM_PRIVATE_FIELDS \
@@ -149,6 +176,11 @@ typedef void* uv_lib_t;
   const char* pipe_fname; /* strdup'ed */
 
 
+/* UV_POLL */
+#define UV_POLL_PRIVATE_FIELDS        \
+  ev_io io_watcher;
+
+
 /* UV_PREPARE */ \
 #define UV_PREPARE_PRIVATE_FIELDS \
   ev_prepare prepare_watcher; \
@@ -177,11 +209,6 @@ typedef void* uv_lib_t;
 #define UV_TIMER_PRIVATE_FIELDS \
   ev_timer timer_watcher; \
   uv_timer_cb timer_cb;
-
-#define UV_ARES_TASK_PRIVATE_FIELDS \
-  int sock; \
-  ev_io read_watcher; \
-  ev_io write_watcher;
 
 #define UV_GETADDRINFO_PRIVATE_FIELDS \
   uv_getaddrinfo_cb cb; \
@@ -219,7 +246,7 @@ typedef void* uv_lib_t;
   ev_io read_watcher;                 \
   uv_fs_event_cb cb;
 
-#elif (defined(__MAC_OS_X_VERSION_MIN_REQUIRED) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 1060) \
+#elif defined(__APPLE__)  \
   || defined(__FreeBSD__) \
   || defined(__OpenBSD__) \
   || defined(__NetBSD__)
@@ -230,9 +257,6 @@ typedef void* uv_lib_t;
   int fflags; \
 
 #elif defined(__sun)
-
-#include <sys/port.h>
-#include <port.h>
 
 #ifdef PORT_SOURCE_FILE
 # define UV_FS_EVENT_PRIVATE_FIELDS \

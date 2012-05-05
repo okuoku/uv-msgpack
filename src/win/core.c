@@ -59,7 +59,6 @@ static void uv_init(void) {
 
 
 static void uv_loop_init(uv_loop_t* loop) {
-  loop->uv_ares_handles_ = NULL;
   /* Create an I/O completion port */
   loop->iocp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 1);
   if (loop->iocp == NULL) {
@@ -75,6 +74,7 @@ static void uv_loop_init(uv_loop_t* loop) {
   loop->endgame_handles = NULL;
 
   RB_INIT(&loop->timers);
+  RB_INIT(&loop->uv_ares_handles_);
 
   loop->check_handles = NULL;
   loop->prepare_handles = NULL;
@@ -84,6 +84,8 @@ static void uv_loop_init(uv_loop_t* loop) {
   loop->next_check_handle = NULL;
   loop->next_idle_handle = NULL;
 
+  memset(&loop->poll_peer_sockets, 0, sizeof loop->poll_peer_sockets);
+
   loop->ares_active_sockets = 0;
   loop->ares_chan = NULL;
 
@@ -91,6 +93,8 @@ static void uv_loop_init(uv_loop_t* loop) {
   loop->active_udp_streams = 0;
 
   loop->last_err = uv_ok_;
+
+  memset(&loop->counters, 0, sizeof loop->counters);
 }
 
 
@@ -128,6 +132,14 @@ uv_loop_t* uv_loop_new(void) {
 
 void uv_loop_delete(uv_loop_t* loop) {
   if (loop != &uv_default_loop_) {
+    int i;
+    for (i = 0; i < ARRAY_SIZE(loop->poll_peer_sockets); i++) {
+      SOCKET sock = loop->poll_peer_sockets[i];
+      if (sock != 0 && sock != INVALID_SOCKET) {
+        closesocket(sock);
+      }
+    }
+
     free(loop);
   }
 }
