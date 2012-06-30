@@ -338,6 +338,11 @@ option(UV_BUILD_TESTS "Build libuv tests" OFF)
 option(UV_BUILD_BENCHMARKS "Build libuv benchmarks" OFF)
 
 if(UV_BUILD_TESTS)
+    if(${CMAKE_SYSTEM_NAME} STREQUAL "CYGWIN")
+        set_source_files_properties(test/test-fs.c
+            PROPERTIES
+            COMPILE_DEFINITIONS "_POSIX_C_SOURCE=1")
+    endif()
     add_executable(uv-tests ${UV_TEST_SRCS} ${UV_TESTRUNNER_SRCS})
     target_link_libraries(uv-tests uv ${UV_LIBS})
 endif()
