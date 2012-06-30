@@ -149,6 +149,7 @@ set(UV_POSIX_SRCS
     src/unix/pipe.c
     src/unix/poll.c
     src/unix/process.c
+    src/unix/stream.c
     src/unix/tcp.c
     src/unix/thread.c
     src/unix/timer.c
@@ -302,13 +303,15 @@ else()
             )
         set(UV_LIBS rt m dl)
     elseif(${CMAKE_SYSTEM_NAME} STREQUAL "FreeBSD")
-        add_definitions(-DEV_CONFIG_H=\"config_freebsd.h\" -DEIO_CONFIG_H=\"config_freebsd.h\")
+        add_definitions(-DEV_CONFIG_H=\"config_freebsd.h\"
+            -DEIO_CONFIG_H=\"config_freebsd.h\")
         include_directories(src/ares/config_freebsd)
         set(UV_SRCS
             ${UV_POSIX_SRCS}
             ${UV_COMMON_SRCS}
             src/unix/freebsd.c
-            src/unix/kqueue.c)
+            src/unix/kqueue.c
+            )
         set(UV_LIBS m pthread kvm)
     elseif(${CMAKE_SYSTEM_NAME} STREQUAL "CYGWIN")
         add_definitions(-DEV_CONFIG_H=\"config_cygwin.h\" 
