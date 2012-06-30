@@ -1,3 +1,4 @@
+set(CMAKE_LEGACY_CYGWIN_WIN32 0)
 PROJECT(uv)
 cmake_minimum_required(VERSION 2.8)
 
@@ -288,7 +289,7 @@ else()
             src/unix/darwin.c
             src/unix/kqueue.c)
         set(UV_LIBS m)
-    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    elseif(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
         add_definitions(-DEV_CONFIG_H=\"config_linux.h\" -DEIO_CONFIG_H=\"config_linux.h\")
         include_directories(src/ares/config_linux)
         set(UV_SRCS
@@ -300,7 +301,7 @@ else()
             # src/unix/linux/syscalls.h
             )
         set(UV_LIBS rt m dl)
-    elseif(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+    elseif(${CMAKE_SYSTEM_NAME} STREQUAL "FreeBSD")
         add_definitions(-DEV_CONFIG_H=\"config_freebsd.h\" -DEIO_CONFIG_H=\"config_freebsd.h\")
         include_directories(src/ares/config_freebsd)
         set(UV_SRCS
@@ -309,6 +310,19 @@ else()
             src/unix/freebsd.c
             src/unix/kqueue.c)
         set(UV_LIBS m pthread kvm)
+    elseif(${CMAKE_SYSTEM_NAME} STREQUAL "CYGWIN")
+        add_definitions(-DEV_CONFIG_H=\"config_cygwin.h\" 
+            -DEIO_CONFIG_H=\"config_cygwin.h\")
+        include_directories(src/ares/config_cygwin)
+        set(UV_SRCS
+            ${UV_POSIX_SRCS}
+            ${UV_COMMON_SRCS}
+            src/unix/cygwin.c
+            )
+        set(UV_LIBS rt m dl)
+    else()
+        message(FATAL_ERROR
+            "We don't support this system for now: ${CMAKE_SYSTEM_NAME}")
     endif()
 endif()
 
