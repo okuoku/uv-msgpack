@@ -1,4 +1,5 @@
 /* Copyright Joyent, Inc. and other Node contributors. All rights reserved.
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
  * deal in the Software without restriction, including without limitation the
@@ -18,63 +19,51 @@
  * IN THE SOFTWARE.
  */
 
+#ifndef UV_WIN_STREAM_INL_H_
+#define UV_WIN_STREAM_INL_H_
+
+#include <assert.h>
+
 #include "uv.h"
 #include "internal.h"
+#include "handle-inl.h"
+#include "req-inl.h"
 
 
-static void uv__check(EV_P_ ev_check* w, int revents) {
-  uv_check_t* check = container_of(w, uv_check_t, check_watcher);
+INLINE static void uv_stream_init(uv_loop_t* loop,
+                                  uv_stream_t* handle,
+                                  uv_handle_type type) {
+  uv__handle_init(loop, (uv_handle_t*) handle, type);
+  handle->write_queue_size = 0;
+  handle->activecnt = 0;
 
-  if (check->check_cb) {
-    check->check_cb(check, 0);
-  }
+  loop->counters.stream_init++;
 }
 
 
-int uv_check_init(uv_loop_t* loop, uv_check_t* check) {
-  uv__handle_init(loop, (uv_handle_t*)check, UV_CHECK);
-  loop->counters.check_init++;
+INLINE static void uv_connection_init(uv_stream_t* handle) {
+  handle->flags |= UV_HANDLE_CONNECTION;
+  handle->write_reqs_pending = 0;
 
-  ev_check_init(&check->check_watcher, uv__check);
-  check->check_cb = NULL;
+  uv_req_init(handle->loop, (uv_req_t*) &(handle->read_req));
+  handle->read_req.event_handle = NULL;
+  handle->read_req.wait_handle = INVALID_HANDLE_VALUE;
+  handle->read_req.type = UV_READ;
+  handle->read_req.data = handle;
 
-  return 0;
+  handle->shutdown_req = NULL;
 }
 
 
-int uv_check_start(uv_check_t* check, uv_check_cb cb) {
-  int was_active = ev_is_active(&check->check_watcher);
+INLINE static size_t uv_count_bufs(uv_buf_t bufs[], int count) {
+  size_t bytes = 0;
+  int i;
 
-  check->check_cb = cb;
-
-  ev_check_start(check->loop->ev, &check->check_watcher);
-
-  if (!was_active) {
-    ev_unref(check->loop->ev);
-  }
-
-  return 0;
-}
-
-
-int uv_check_stop(uv_check_t* check) {
-  int was_active = ev_is_active(&check->check_watcher);
-
-  ev_check_stop(check->loop->ev, &check->check_watcher);
-
-  if (was_active) {
-    ev_ref(check->loop->ev);
+  for (i = 0; i < count; i++) {
+    bytes += (size_t)bufs[i].len;
   }
 
-  return 0;
+  return bytes;
 }
 
-
-int uv__check_active(const uv_check_t* handle) {
-  return ev_is_active(&handle->check_watcher);
-}
-
-
-void uv__check_close(uv_check_t* handle) {
-  uv_check_stop(handle);
-}
+#endif /* UV_WIN_STREAM_INL_H_ */

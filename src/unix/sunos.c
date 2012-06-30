@@ -28,7 +28,7 @@
 #include <assert.h>
 #include <errno.h>
 
-#ifdef SUNOS_HAVE_IFADDRS
+#ifndef SUNOS_NO_IFADDRS
 # include <ifaddrs.h>
 #endif
 #include <net/if.h>
@@ -75,7 +75,6 @@ uint64_t uv_hrtime() {
  */
 int uv_exepath(char* buffer, size_t* size) {
   ssize_t res;
-  pid_t pid;
   char buf[128];
 
   if (buffer == NULL)
@@ -84,8 +83,7 @@ int uv_exepath(char* buffer, size_t* size) {
   if (size == NULL)
     return (-1);
 
-  pid = getpid();
-  (void) snprintf(buf, sizeof (buf), "/proc/%d/path/a.out", pid);
+  (void) snprintf(buf, sizeof(buf), "/proc/%lu/path/a.out", (unsigned long) getpid());
   res = readlink(buf, buffer, *size - 1);
 
   if (res < 0)
@@ -128,26 +126,27 @@ static void uv__fs_event_rearm(uv_fs_event_t *handle) {
 }
 
 
-static void uv__fs_event_read(EV_P_ ev_io* w, int revents) {
+static void uv__fs_event_read(uv_loop_t* loop, uv__io_t* w, int revents) {
   uv_fs_event_t *handle;
-  uv_loop_t *loop_;
   timespec_t timeout;
   port_event_t pe;
   int events;
   int r;
 
-  loop_ = container_of(w, uv_loop_t, fs_event_watcher);
+  (void) w;
+  (void) revents;
 
   do {
     /* TODO use port_getn() */
     do {
       memset(&timeout, 0, sizeof timeout);
-      r = port_get(loop_->fs_fd, &pe, &timeout);
+      r = port_get(loop->fs_fd, &pe, &timeout);
     }
     while (r == -1 && errno == EINTR);
 
     if (r == -1 && errno == ETIME)
       break;
+
     handle = (uv_fs_event_t *)pe.portev_user;
     assert((r == 0) && "unexpected port_get() error");
 
@@ -189,6 +188,7 @@ int uv_fs_event_init(uv_loop_t* loop,
   }
 
   uv__handle_init(loop, (uv_handle_t*)handle, UV_FS_EVENT);
+  uv__handle_start(handle); /* FIXME shouldn't start automatically */
   handle->filename = strdup(filename);
   handle->fd = PORT_UNUSED;
   handle->cb = cb;
@@ -198,9 +198,8 @@ int uv_fs_event_init(uv_loop_t* loop,
   uv__fs_event_rearm(handle);
 
   if (first_run) {
-    ev_io_init(&loop->fs_event_watcher, uv__fs_event_read, portfd, EV_READ);
-    ev_io_start(loop->ev, &loop->fs_event_watcher);
-    ev_unref(loop->ev);
+    uv__io_init(&loop->fs_event_watcher, uv__fs_event_read, portfd, UV__IO_READ);
+    uv__io_start(loop, &loop->fs_event_watcher);
   }
 
   return 0;
@@ -215,6 +214,7 @@ void uv__fs_event_close(uv_fs_event_t* handle) {
   free(handle->filename);
   handle->filename = NULL;
   handle->fo.fo_name = NULL;
+  uv__handle_stop(handle);
 }
 
 #else /* !HAVE_PORTS_FS */
@@ -331,14 +331,6 @@ uv_err_t uv_cpu_info(uv_cpu_info_t** cpu_infos, int* count) {
   lookup_instance = 0;
   while ((ksp = kstat_lookup(kc, (char *)"cpu_info", lookup_instance, NULL))) {
     if (kstat_read(kc, ksp, NULL) == -1) {
-      /*
-       * It is deeply annoying, but some kstats can return errors
-       * under otherwise routine conditions.  (ACPI is one
-       * offender; there are surely others.)  To prevent these
-       * fouled kstats from completely ruining our day, we assign
-       * an "error" member to the return value that consists of
-       * the strerror().
-       */
       cpu_info->speed = 0;
       cpu_info->model = NULL;
     } else {
@@ -348,7 +340,7 @@ uv_err_t uv_cpu_info(uv_cpu_info_t** cpu_infos, int* count) {
 
       knp = (kstat_named_t *) kstat_data_lookup(ksp, (char *)"brand");
       assert(knp->data_type == KSTAT_DATA_STRING);
-      cpu_info->model = KSTAT_NAMED_STR_PTR(knp);
+      cpu_info->model = strdup(KSTAT_NAMED_STR_PTR(knp));
     }
 
     lookup_instance++;
@@ -407,7 +399,7 @@ void uv_free_cpu_info(uv_cpu_info_t* cpu_infos, int count) {
 
 uv_err_t uv_interface_addresses(uv_interface_address_t** addresses,
   int* count) {
-#ifndef SUNOS_HAVE_IFADDRS
+#ifdef SUNOS_NO_IFADDRS
   return uv__new_artificial_error(UV_ENOSYS);
 #else
   struct ifaddrs *addrs, *ent;
@@ -440,7 +432,8 @@ uv_err_t uv_interface_addresses(uv_interface_address_t** addresses,
   address = *addresses;
 
   for (ent = addrs; ent != NULL; ent = ent->ifa_next) {
-    bzero(&ip, sizeof (ip));
+    memset(&ip, 0, sizeof(ip));
+
     if (!(ent->ifa_flags & IFF_UP && ent->ifa_flags & IFF_RUNNING)) {
       continue;
     }
@@ -466,7 +459,7 @@ uv_err_t uv_interface_addresses(uv_interface_address_t** addresses,
   freeifaddrs(addrs);
 
   return uv_ok_;
-#endif  /* SUNOS_HAVE_IFADDRS */
+#endif  /* SUNOS_NO_IFADDRS */
 }
 
 

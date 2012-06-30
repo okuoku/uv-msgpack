@@ -19,7 +19,7 @@
  */
 
 #include "uv.h"
-#include "unix/internal.h"
+#include "internal.h"
 
 #include <stddef.h> /* NULL */
 #include <stdio.h> /* printf */
@@ -58,8 +58,6 @@
 
 static uv_loop_t default_loop_struct;
 static uv_loop_t* default_loop_ptr;
-
-static void uv__finish_close(uv_handle_t* handle);
 
 
 void uv_close(uv_handle_t* handle, uv_close_cb close_cb) {
@@ -111,14 +109,78 @@ void uv_close(uv_handle_t* handle, uv_close_cb close_cb) {
     uv__poll_close((uv_poll_t*)handle);
     break;
 
+  case UV_FS_POLL:
+    uv__fs_poll_close((uv_fs_poll_t*)handle);
+    break;
+
   default:
     assert(0);
   }
 
   handle->flags |= UV_CLOSING;
-  handle->endgame_next = handle->loop->endgame_handles;
-  handle->loop->endgame_handles = handle;
-  uv_unref(handle->loop);
+
+  handle->next_closing = handle->loop->closing_handles;
+  handle->loop->closing_handles = handle;
+}
+
+
+static void uv__finish_close(uv_handle_t* handle) {
+  assert(!uv__is_active(handle));
+  assert(handle->flags & UV_CLOSING);
+  assert(!(handle->flags & UV_CLOSED));
+  handle->flags |= UV_CLOSED;
+
+  switch (handle->type) {
+    case UV_PREPARE:
+    case UV_CHECK:
+    case UV_IDLE:
+    case UV_ASYNC:
+    case UV_TIMER:
+    case UV_PROCESS:
+    case UV_FS_EVENT:
+    case UV_FS_POLL:
+    case UV_POLL:
+      break;
+
+    case UV_NAMED_PIPE:
+    case UV_TCP:
+    case UV_TTY:
+      assert(!uv__io_active(&((uv_stream_t*)handle)->read_watcher));
+      assert(!uv__io_active(&((uv_stream_t*)handle)->write_watcher));
+      assert(((uv_stream_t*)handle)->fd == -1);
+      uv__stream_destroy((uv_stream_t*)handle);
+      break;
+
+    case UV_UDP:
+      uv__udp_finish_close((uv_udp_t*)handle);
+      break;
+
+    default:
+      assert(0);
+      break;
+  }
+
+  uv__handle_unref(handle);
+  ngx_queue_remove(&handle->handle_queue);
+
+  if (handle->close_cb) {
+    handle->close_cb(handle);
+  }
+}
+
+
+static void uv__run_closing_handles(uv_loop_t* loop) {
+  uv_handle_t* p;
+  uv_handle_t* q;
+
+  p = loop->closing_handles;
+  loop->closing_handles = NULL;
+
+  while (p) {
+    q = p->next_closing;
+    uv__finish_close(p);
+    p = q;
+  }
 }
 
 
@@ -165,245 +227,185 @@ void uv_loop_delete(uv_loop_t* loop) {
 }
 
 
-int uv_loop_refcount(const uv_loop_t* loop) {
-  return ev_loop_refcount(loop->ev);
+static unsigned int uv__poll_timeout(uv_loop_t* loop) {
+  if (!uv__has_active_handles(loop))
+    return 0;
+
+  if (!ngx_queue_empty(&loop->idle_handles))
+    return 0;
+
+  if (loop->closing_handles)
+    return 0;
+
+  return uv__next_timeout(loop);
 }
 
 
-void uv__run(uv_loop_t* loop) {
-  ev_run(loop->ev, EVRUN_ONCE);
+static void uv__poll(uv_loop_t* loop) {
+  void ev__run(EV_P_ ev_tstamp waittime);
+  ev_invoke_pending(loop->ev);
+  ev__run(loop->ev, uv__poll_timeout(loop) / 1000.);
+  ev_invoke_pending(loop->ev);
+}
 
-  while (loop->endgame_handles)
-    uv__finish_close(loop->endgame_handles);
+
+static int uv__run(uv_loop_t* loop) {
+  uv_update_time(loop);
+  uv__run_timers(loop);
+  uv__run_idle(loop);
+  uv__run_prepare(loop);
+  uv__poll(loop);
+  uv__run_check(loop);
+  uv__run_closing_handles(loop);
+  return uv__has_active_handles(loop) || uv__has_active_reqs(loop);
 }
 
 
 int uv_run(uv_loop_t* loop) {
-  do
-    uv__run(loop);
-  while (uv_loop_refcount(loop) > 0);
-
+  while (uv__run(loop));
   return 0;
 }
 
 
 int uv_run_once(uv_loop_t* loop) {
-  uv__run(loop);
-  return 0;
-}
-
-
-void uv__handle_init(uv_loop_t* loop, uv_handle_t* handle,
-    uv_handle_type type) {
-  loop->counters.handle_init++;
-
-  handle->loop = loop;
-  handle->type = type;
-  handle->flags = 0;
-  handle->endgame_next = NULL;
-  uv_ref(loop); /* unref'd in uv_close() */
-}
-
-
-void uv__finish_close(uv_handle_t* handle) {
-  uv_loop_t* loop = handle->loop;
-
-  assert(handle->flags & UV_CLOSING);
-  assert(!(handle->flags & UV_CLOSED));
-  handle->flags |= UV_CLOSED;
-
-  switch (handle->type) {
-    case UV_PREPARE:
-      assert(!ev_is_active(&((uv_prepare_t*)handle)->prepare_watcher));
-      break;
-
-    case UV_CHECK:
-      assert(!ev_is_active(&((uv_check_t*)handle)->check_watcher));
-      break;
-
-    case UV_IDLE:
-      assert(!ev_is_active(&((uv_idle_t*)handle)->idle_watcher));
-      break;
-
-    case UV_ASYNC:
-      assert(!ev_is_active(&((uv_async_t*)handle)->async_watcher));
-      break;
-
-    case UV_TIMER:
-      assert(!ev_is_active(&((uv_timer_t*)handle)->timer_watcher));
-      break;
-
-    case UV_NAMED_PIPE:
-    case UV_TCP:
-    case UV_TTY:
-      assert(!ev_is_active(&((uv_stream_t*)handle)->read_watcher));
-      assert(!ev_is_active(&((uv_stream_t*)handle)->write_watcher));
-      assert(((uv_stream_t*)handle)->fd == -1);
-      uv__stream_destroy((uv_stream_t*)handle);
-      break;
-
-    case UV_UDP:
-      uv__udp_finish_close((uv_udp_t*)handle);
-      break;
-
-    case UV_PROCESS:
-      assert(!ev_is_active(&((uv_process_t*)handle)->child_watcher));
-      break;
-
-    case UV_FS_EVENT:
-      break;
-
-    case UV_POLL:
-      break;
-
-    default:
-      assert(0);
-      break;
-  }
-
-
-  loop->endgame_handles = handle->endgame_next;
-
-  if (handle->close_cb) {
-    handle->close_cb(handle);
-  }
-}
-
-
-void uv_ref(uv_loop_t* loop) {
-  ev_ref(loop->ev);
-}
-
-
-void uv_unref(uv_loop_t* loop) {
-  ev_unref(loop->ev);
+  return uv__run(loop);
 }
 
 
 void uv_update_time(uv_loop_t* loop) {
-  ev_now_update(loop->ev);
+  loop->time = uv_hrtime() / 1000000;
 }
 
 
 int64_t uv_now(uv_loop_t* loop) {
-  return (int64_t)(ev_now(loop->ev) * 1000);
+  return loop->time;
 }
 
 
 int uv_is_active(const uv_handle_t* handle) {
-  switch (handle->type) {
-  case UV_POLL:
-    return uv__poll_active((const uv_poll_t*)handle);
-  case UV_CHECK:
-    return uv__check_active((const uv_check_t*)handle);
-  case UV_IDLE:
-    return uv__idle_active((const uv_idle_t*)handle);
-  case UV_PREPARE:
-    return uv__prepare_active((const uv_prepare_t*)handle);
-  case UV_TIMER:
-    return uv__timer_active((const uv_timer_t*)handle);
-  default:
-    return 1;
-  }
+  return uv__is_active(handle);
 }
 
 
-static int uv_getaddrinfo_done(eio_req* req) {
-  uv_getaddrinfo_t* handle = req->data;
-  struct addrinfo *res = handle->res;
+static int uv_getaddrinfo_done(eio_req* req_) {
+  uv_getaddrinfo_t* req = req_->data;
+  struct addrinfo *res = req->res;
 #if __sun
-  size_t hostlen = strlen(handle->hostname);
+  size_t hostlen = strlen(req->hostname);
 #endif
 
-  handle->res = NULL;
+  req->res = NULL;
 
-  uv_unref(handle->loop);
+  uv__req_unregister(req->loop, req);
 
-  free(handle->hints);
-  free(handle->service);
-  free(handle->hostname);
+  /* see initialization in uv_getaddrinfo() */
+  if (req->hints)
+    free(req->hints);
+  else if (req->service)
+    free(req->service);
+  else if (req->hostname)
+    free(req->hostname);
+  else
+    assert(0);
 
-  if (handle->retcode == 0) {
+  if (req->retcode == 0) {
     /* OK */
 #if EAI_NODATA /* FreeBSD deprecated EAI_NODATA */
-  } else if (handle->retcode == EAI_NONAME || handle->retcode == EAI_NODATA) {
+  } else if (req->retcode == EAI_NONAME || req->retcode == EAI_NODATA) {
 #else
-  } else if (handle->retcode == EAI_NONAME) {
+  } else if (req->retcode == EAI_NONAME) {
 #endif
-    uv__set_sys_error(handle->loop, ENOENT); /* FIXME compatibility hack */
+    uv__set_sys_error(req->loop, ENOENT); /* FIXME compatibility hack */
 #if __sun
-  } else if (handle->retcode == EAI_MEMORY && hostlen >= MAXHOSTNAMELEN) {
-    uv__set_sys_error(handle->loop, ENOENT);
+  } else if (req->retcode == EAI_MEMORY && hostlen >= MAXHOSTNAMELEN) {
+    uv__set_sys_error(req->loop, ENOENT);
 #endif
   } else {
-    handle->loop->last_err.code = UV_EADDRINFO;
-    handle->loop->last_err.sys_errno_ = handle->retcode;
+    req->loop->last_err.code = UV_EADDRINFO;
+    req->loop->last_err.sys_errno_ = req->retcode;
   }
 
-  handle->cb(handle, handle->retcode, res);
+  req->cb(req, req->retcode, res);
 
   return 0;
 }
 
 
-static void getaddrinfo_thread_proc(eio_req *req) {
-  uv_getaddrinfo_t* handle = req->data;
+static void getaddrinfo_thread_proc(eio_req *req_) {
+  uv_getaddrinfo_t* req = req_->data;
 
-  handle->retcode = getaddrinfo(handle->hostname,
-                                handle->service,
-                                handle->hints,
-                                &handle->res);
+  req->retcode = getaddrinfo(req->hostname,
+                             req->service,
+                             req->hints,
+                             &req->res);
 }
 
 
-/* stub implementation of uv_getaddrinfo */
 int uv_getaddrinfo(uv_loop_t* loop,
-                   uv_getaddrinfo_t* handle,
+                   uv_getaddrinfo_t* req,
                    uv_getaddrinfo_cb cb,
                    const char* hostname,
                    const char* service,
                    const struct addrinfo* hints) {
-  eio_req* req;
+  size_t hostname_len;
+  size_t service_len;
+  size_t hints_len;
+  eio_req* req_;
+  size_t len;
+  char* buf;
+
+  if (req == NULL || cb == NULL || (hostname == NULL && service == NULL))
+    return uv__set_artificial_error(loop, UV_EINVAL);
+
   uv_eio_init(loop);
 
-  if (handle == NULL || cb == NULL ||
-      (hostname == NULL && service == NULL)) {
-    uv__set_artificial_error(loop, UV_EINVAL);
-    return -1;
-  }
+  hostname_len = hostname ? strlen(hostname) + 1 : 0;
+  service_len = service ? strlen(service) + 1 : 0;
+  hints_len = hints ? sizeof(*hints) : 0;
+  buf = malloc(hostname_len + service_len + hints_len);
 
-  uv__req_init(loop, handle, UV_GETADDRINFO);
-  handle->loop = loop;
-  handle->cb = cb;
+  if (buf == NULL)
+    return uv__set_artificial_error(loop, UV_ENOMEM);
 
-  /* TODO don't alloc so much. */
+  uv__req_init(loop, req, UV_GETADDRINFO);
+  req->loop = loop;
+  req->cb = cb;
+  req->res = NULL;
+  req->hints = NULL;
+  req->service = NULL;
+  req->hostname = NULL;
+  req->retcode = 0;
+
+  /* order matters, see uv_getaddrinfo_done() */
+  len = 0;
 
   if (hints) {
-    handle->hints = malloc(sizeof(struct addrinfo));
-    memcpy(handle->hints, hints, sizeof(struct addrinfo));
-  }
-  else {
-    handle->hints = NULL;
+    req->hints = memcpy(buf + len, hints, sizeof(*hints));
+    len += sizeof(*hints);
   }
 
-  /* TODO security! check lengths, check return values. */
+  if (service) {
+    req->service = memcpy(buf + len, service, service_len);
+    len += service_len;
+  }
 
-  handle->hostname = hostname ? strdup(hostname) : NULL;
-  handle->service = service ? strdup(service) : NULL;
-  handle->res = NULL;
-  handle->retcode = 0;
+  if (hostname) {
+    req->hostname = memcpy(buf + len, hostname, hostname_len);
+    len += hostname_len;
+  }
 
-  /* TODO check handle->hostname == NULL */
-  /* TODO check handle->service == NULL */
+  req_ = eio_custom(getaddrinfo_thread_proc,
+                    EIO_PRI_DEFAULT,
+                    uv_getaddrinfo_done,
+                    req,
+                    &loop->uv_eio_channel);
 
-  uv_ref(loop);
+  if (req_)
+    return 0;
 
-  req = eio_custom(getaddrinfo_thread_proc, EIO_PRI_DEFAULT,
-      uv_getaddrinfo_done, handle, &loop->uv_eio_channel);
-  assert(req);
-  assert(req->data == handle);
+  free(buf);
 
-  return 0;
+  return uv__set_artificial_error(loop, UV_ENOMEM);
 }
 
 
@@ -442,14 +444,23 @@ out:
 }
 
 
-int uv__accept(int sockfd, struct sockaddr* saddr, socklen_t slen) {
+int uv__accept(int sockfd) {
   int peerfd;
 
   assert(sockfd >= 0);
 
   while (1) {
 #if __linux__
-    peerfd = uv__accept4(sockfd, saddr, &slen, UV__SOCK_NONBLOCK|UV__SOCK_CLOEXEC);
+    static int no_accept4;
+
+    if (no_accept4)
+      goto skip;
+
+    peerfd = uv__accept4(sockfd,
+                         NULL,
+                         NULL,
+                         UV__SOCK_NONBLOCK|UV__SOCK_CLOEXEC);
+
     if (peerfd != -1)
       break;
 
@@ -458,9 +469,14 @@ int uv__accept(int sockfd, struct sockaddr* saddr, socklen_t slen) {
 
     if (errno != ENOSYS)
       break;
+
+    no_accept4 = 1;
+skip:
 #endif
 
-    if ((peerfd = accept(sockfd, saddr, &slen)) == -1) {
+    peerfd = accept(sockfd, NULL, NULL);
+
+    if (peerfd == -1) {
       if (errno == EINTR)
         continue;
       else
@@ -479,57 +495,79 @@ int uv__accept(int sockfd, struct sockaddr* saddr, socklen_t slen) {
 }
 
 
+#if __linux__
+
 int uv__nonblock(int fd, int set) {
-#if FIONBIO
-  return ioctl(fd, FIONBIO, &set);
-#else
-  int flags;
+  int r;
 
-  if ((flags = fcntl(fd, F_GETFL)) == -1) {
-    return -1;
-  }
+  do
+    r = ioctl(fd, FIONBIO, &set);
+  while (r == -1 && errno == EINTR);
 
-  if (set) {
-    flags |= O_NONBLOCK;
-  } else {
-    flags &= ~O_NONBLOCK;
-  }
-
-  if (fcntl(fd, F_SETFL, flags) == -1) {
-    return -1;
-  }
-
-  return 0;
-#endif
+  return r;
 }
 
 
 int uv__cloexec(int fd, int set) {
-#if __linux__
-  /* Linux knows only FD_CLOEXEC so we can safely omit the fcntl(F_GETFD)
-   * syscall. CHECKME: That's probably true for other Unices as well.
-   */
-  return fcntl(fd, F_SETFD, set ? FD_CLOEXEC : 0);
-#else
-  int flags;
+  int r;
 
-  if ((flags = fcntl(fd, F_GETFD)) == -1) {
-    return -1;
-  }
+  do
+    r = ioctl(fd, set ? FIOCLEX : FIONCLEX);
+  while (r == -1 && errno == EINTR);
 
-  if (set) {
-    flags |= FD_CLOEXEC;
-  } else {
-    flags &= ~FD_CLOEXEC;
-  }
-
-  if (fcntl(fd, F_SETFD, flags) == -1) {
-    return -1;
-  }
-
-  return 0;
-#endif
+  return r;
 }
+
+#else /* !__linux__ */
+
+int uv__nonblock(int fd, int set) {
+  int flags;
+  int r;
+
+  do
+    r = fcntl(fd, F_GETFL);
+  while (r == -1 && errno == EINTR);
+
+  if (r == -1)
+    return -1;
+
+  if (set)
+    flags = r | O_NONBLOCK;
+  else
+    flags = r & ~O_NONBLOCK;
+
+  do
+    r = fcntl(fd, F_SETFL, flags);
+  while (r == -1 && errno == EINTR);
+
+  return r;
+}
+
+
+int uv__cloexec(int fd, int set) {
+  int flags;
+  int r;
+
+  do
+    r = fcntl(fd, F_GETFD);
+  while (r == -1 && errno == EINTR);
+
+  if (r == -1)
+    return -1;
+
+  if (set)
+    flags = r | FD_CLOEXEC;
+  else
+    flags = r & ~FD_CLOEXEC;
+
+  do
+    r = fcntl(fd, F_SETFD, flags);
+  while (r == -1 && errno == EINTR);
+
+  return r;
+}
+
+#endif /* __linux__ */
 
 
 /* This function is not execve-safe, there is a race window
@@ -587,4 +625,64 @@ uv_err_t uv_chdir(const char* dir) {
   } else {
     return uv__new_sys_error(errno);
   }
+}
+
+
+void uv_disable_stdio_inheritance(void) {
+  int fd;
+
+  /* Set the CLOEXEC flag on all open descriptors. Unconditionally try the
+   * first 16 file descriptors. After that, bail out after the first error.
+   */
+  for (fd = 0; ; fd++)
+    if (uv__cloexec(fd, 1) && fd > 15)
+      break;
+}
+
+
+static void uv__io_set_cb(uv__io_t* handle, uv__io_cb cb) {
+  union { void* data; uv__io_cb cb; } u;
+  u.cb = cb;
+  handle->io_watcher.data = u.data;
+}
+
+
+static void uv__io_rw(struct ev_loop* ev, ev_io* w, int events) {
+  union { void* data; uv__io_cb cb; } u;
+  uv_loop_t* loop = ev_userdata(ev);
+  uv__io_t* handle = container_of(w, uv__io_t, io_watcher);
+  u.data = handle->io_watcher.data;
+  u.cb(loop, handle, events & (EV_READ|EV_WRITE|EV_ERROR));
+}
+
+
+void uv__io_init(uv__io_t* handle, uv__io_cb cb, int fd, int events) {
+  ev_io_init(&handle->io_watcher, uv__io_rw, fd, events & (EV_READ|EV_WRITE));
+  uv__io_set_cb(handle, cb);
+}
+
+
+void uv__io_set(uv__io_t* handle, uv__io_cb cb, int fd, int events) {
+  ev_io_set(&handle->io_watcher, fd, events);
+  uv__io_set_cb(handle, cb);
+}
+
+
+void uv__io_start(uv_loop_t* loop, uv__io_t* handle) {
+  ev_io_start(loop->ev, &handle->io_watcher);
+}
+
+
+void uv__io_stop(uv_loop_t* loop, uv__io_t* handle) {
+  ev_io_stop(loop->ev, &handle->io_watcher);
+}
+
+
+void uv__io_feed(uv_loop_t* loop, uv__io_t* handle, int event) {
+  ev_feed_event(loop->ev, &handle->io_watcher, event);
+}
+
+
+int uv__io_active(uv__io_t* handle) {
+  return ev_is_active(&handle->io_watcher);
 }

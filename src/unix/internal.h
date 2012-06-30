@@ -27,7 +27,6 @@
 
 #include <assert.h>
 #include <stdlib.h> /* abort */
-#include <stddef.h> /* offsetof */
 
 #if __STRICT_ANSI__
 # define inline __inline
@@ -64,9 +63,6 @@
 # define HAVE_KQUEUE 1
 #endif
 
-#define container_of(ptr, type, member) \
-  ((type *) ((char *) (ptr) - offsetof(type, member)))
-
 #define UNREACHABLE()                                                         \
   do {                                                                        \
     assert(0 && "unreachable code");                                          \
@@ -82,6 +78,10 @@
   }                                                                           \
   while (0)
 
+#define UV__IO_READ  EV_READ
+#define UV__IO_WRITE EV_WRITE
+#define UV__IO_ERROR EV_ERROR
+
 /* flags */
 enum {
   UV_CLOSING          = 0x01,   /* uv_close() called but not finished. */
@@ -91,10 +91,9 @@ enum {
   UV_STREAM_SHUT      = 0x10,   /* Write side closed. */
   UV_STREAM_READABLE  = 0x20,   /* The stream is readable */
   UV_STREAM_WRITABLE  = 0x40,   /* The stream is writable */
-  UV_TCP_NODELAY      = 0x080,  /* Disable Nagle. */
-  UV_TCP_KEEPALIVE    = 0x100,  /* Turn on keep-alive. */
-  UV_TIMER_ACTIVE     = 0x080,
-  UV_TIMER_REPEAT     = 0x100
+  UV_STREAM_BLOCKING  = 0x80,   /* Synchronous writes. */
+  UV_TCP_NODELAY      = 0x100,  /* Disable Nagle. */
+  UV_TCP_KEEPALIVE    = 0x200   /* Turn on keep-alive. */
 };
 
 inline static void uv__req_init(uv_loop_t* loop,
@@ -102,20 +101,32 @@ inline static void uv__req_init(uv_loop_t* loop,
                                 uv_req_type type) {
   loop->counters.req_init++;
   req->type = type;
+  uv__req_register(loop, req);
 }
 #define uv__req_init(loop, req, type) \
   uv__req_init((loop), (uv_req_t*)(req), (type))
 
 /* core */
 void uv__handle_init(uv_loop_t* loop, uv_handle_t* handle, uv_handle_type type);
-int uv__nonblock(int fd, int set) __attribute__((unused));
-int uv__cloexec(int fd, int set) __attribute__((unused));
+int uv__nonblock(int fd, int set);
+int uv__cloexec(int fd, int set);
 int uv__socket(int domain, int type, int protocol);
 int uv__dup(int fd);
+int uv_async_stop(uv_async_t* handle);
+
+void uv__io_init(uv__io_t* handle, uv__io_cb cb, int fd, int events);
+void uv__io_set(uv__io_t* handle, uv__io_cb cb, int fd, int events);
+void uv__io_start(uv_loop_t* loop, uv__io_t* handle);
+void uv__io_stop(uv_loop_t* loop, uv__io_t* handle);
+void uv__io_feed(uv_loop_t* loop, uv__io_t* handle, int event);
+int uv__io_active(uv__io_t* handle);
 
 /* loop */
 int uv__loop_init(uv_loop_t* loop, int default_loop);
 void uv__loop_delete(uv_loop_t* loop);
+void uv__run_idle(uv_loop_t* loop);
+void uv__run_check(uv_loop_t* loop);
+void uv__run_prepare(uv_loop_t* loop);
 
 /* error */
 uv_err_code uv_translate_sys_error(int sys_errno);
@@ -126,9 +137,8 @@ void uv__stream_init(uv_loop_t* loop, uv_stream_t* stream,
     uv_handle_type type);
 int uv__stream_open(uv_stream_t*, int fd, int flags);
 void uv__stream_destroy(uv_stream_t* stream);
-void uv__stream_io(EV_P_ ev_io* watcher, int revents);
-void uv__server_io(EV_P_ ev_io* watcher, int revents);
-int uv__accept(int sockfd, struct sockaddr* saddr, socklen_t len);
+void uv__server_io(uv_loop_t* loop, uv__io_t* watcher, int events);
+int uv__accept(int sockfd);
 int uv__connect(uv_connect_t* req, uv_stream_t* stream, struct sockaddr* addr,
     socklen_t addrlen, uv_connect_cb cb);
 
@@ -139,23 +149,18 @@ int uv__tcp_keepalive(uv_tcp_t* handle, int enable, unsigned int delay);
 
 /* pipe */
 int uv_pipe_listen(uv_pipe_t* handle, int backlog, uv_connection_cb cb);
-void uv__pipe_accept(EV_P_ ev_io* watcher, int revents);
 
-/* poll */
-void uv__poll_close(uv_poll_t* handle);
-int uv__poll_active(const uv_poll_t* handle);
+/* timer */
+void uv__run_timers(uv_loop_t* loop);
+unsigned int uv__next_timeout(uv_loop_t* loop);
 
 /* various */
-int uv__check_active(const uv_check_t* handle);
-int uv__idle_active(const uv_idle_t* handle);
-int uv__prepare_active(const uv_prepare_t* handle);
-int uv__timer_active(const uv_timer_t* handle);
-
 void uv__async_close(uv_async_t* handle);
 void uv__check_close(uv_check_t* handle);
 void uv__fs_event_close(uv_fs_event_t* handle);
 void uv__idle_close(uv_idle_t* handle);
 void uv__pipe_close(uv_pipe_t* handle);
+void uv__poll_close(uv_poll_t* handle);
 void uv__prepare_close(uv_prepare_t* handle);
 void uv__process_close(uv_process_t* handle);
 void uv__stream_close(uv_stream_t* handle);
@@ -163,8 +168,12 @@ void uv__timer_close(uv_timer_t* handle);
 void uv__udp_close(uv_udp_t* handle);
 void uv__udp_finish_close(uv_udp_t* handle);
 
-#define UV__F_IPC        (1 << 0)
-#define UV__F_NONBLOCK   (1 << 1)
+#ifdef UV__O_NONBLOCK
+# define UV__F_NONBLOCK UV__O_NONBLOCK
+#else
+# define UV__F_NONBLOCK 1
+#endif
+
 int uv__make_socketpair(int fds[2], int flags);
 int uv__make_pipe(int fds[2], int flags);
 

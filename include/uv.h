@@ -49,7 +49,7 @@ extern "C" {
 
 
 #define UV_VERSION_MAJOR 0
-#define UV_VERSION_MINOR 6
+#define UV_VERSION_MINOR 9
 
 
 #include <stdint.h> /* int64_t */
@@ -126,7 +126,8 @@ extern "C" {
   XX( 53, ENOTEMPTY, "directory not empty") \
   XX( 54, ENOSPC, "no space left on device") \
   XX( 55, EIO, "i/o error") \
-  XX( 56, EROFS, "read-only file system" )
+  XX( 56, EROFS, "read-only file system" ) \
+  XX( 57, ENODEV, "no such device" )
 
 
 #define UV_ERRNO_GEN(val, name, s) UV_##name = val,
@@ -137,12 +138,13 @@ typedef enum {
 #undef UV_ERRNO_GEN
 
 #define UV_HANDLE_TYPE_MAP(XX)  \
-  XX(ARES_TASK, ares_task)      \
   XX(ASYNC, async)              \
   XX(CHECK, check)              \
   XX(FS_EVENT, fs_event)        \
+  XX(FS_POLL, fs_poll)          \
   XX(IDLE, idle)                \
   XX(NAMED_PIPE, pipe)          \
+  XX(POLL, poll)                \
   XX(PREPARE, prepare)          \
   XX(PROCESS, process)          \
   XX(TCP, tcp)                  \
@@ -164,9 +166,8 @@ typedef enum {
 #define XX(uc, lc) UV_##uc,
   UV_HANDLE_TYPE_MAP(XX)
 #undef XX
-  UV_POLL,
+  UV_ARES_TASK,
   UV_FILE,
-  UV_HANDLE_TYPE_PRIVATE
   UV_HANDLE_TYPE_MAX
 } uv_handle_type;
 
@@ -180,7 +181,7 @@ typedef enum {
 } uv_req_type;
 
 
-
+/* Handle types. */
 typedef struct uv_loop_s uv_loop_t;
 typedef struct uv_ares_task_s uv_ares_task_t;
 typedef struct uv_err_s uv_err_t;
@@ -196,21 +197,24 @@ typedef struct uv_prepare_s uv_prepare_t;
 typedef struct uv_check_s uv_check_t;
 typedef struct uv_idle_s uv_idle_t;
 typedef struct uv_async_s uv_async_t;
-typedef struct uv_getaddrinfo_s uv_getaddrinfo_t;
 typedef struct uv_process_s uv_process_t;
-typedef struct uv_counters_s uv_counters_t;
-typedef struct uv_cpu_info_s uv_cpu_info_t;
-typedef struct uv_interface_address_s uv_interface_address_t;
-/* Request types */
+typedef struct uv_fs_event_s uv_fs_event_t;
+typedef struct uv_fs_poll_s uv_fs_poll_t;
+
+/* Request types. */
 typedef struct uv_req_s uv_req_t;
+typedef struct uv_getaddrinfo_s uv_getaddrinfo_t;
 typedef struct uv_shutdown_s uv_shutdown_t;
 typedef struct uv_write_s uv_write_t;
 typedef struct uv_connect_s uv_connect_t;
 typedef struct uv_udp_send_s uv_udp_send_t;
 typedef struct uv_fs_s uv_fs_t;
-/* uv_fs_event_t is a subclass of uv_handle_t. */
-typedef struct uv_fs_event_s uv_fs_event_t;
 typedef struct uv_work_s uv_work_t;
+
+/* None of the above. */
+typedef struct uv_counters_s uv_counters_t;
+typedef struct uv_cpu_info_s uv_cpu_info_t;
+typedef struct uv_interface_address_s uv_interface_address_t;
 
 
 /*
@@ -224,10 +228,6 @@ typedef struct uv_work_s uv_work_t;
 UV_EXTERN uv_loop_t* uv_loop_new(void);
 UV_EXTERN void uv_loop_delete(uv_loop_t*);
 
-/* This is a debugging tool. It's NOT part of the official API. */
-UV_EXTERN int uv_loop_refcount(const uv_loop_t*);
-
-
 /*
  * Returns the default loop.
  */
@@ -235,21 +235,24 @@ UV_EXTERN uv_loop_t* uv_default_loop(void);
 
 /*
  * This function starts the event loop. It blocks until the reference count
- * of the loop drops to zero.
+ * of the loop drops to zero. Always returns zero.
  */
-UV_EXTERN int uv_run (uv_loop_t*);
+UV_EXTERN int uv_run(uv_loop_t*);
 
 /*
- * This function polls for new events without blocking.
+ * Poll for new events once. Note that this function blocks if there are no
+ * pending events. Returns zero when done (no active handles or requests left),
+ * or non-zero if more events are expected (meaning you should call
+ * uv_run_once() again sometime in the future).
  */
-UV_EXTERN int uv_run_once (uv_loop_t*);
+UV_EXTERN int uv_run_once(uv_loop_t*);
 
 /*
  * Manually modify the event loop's reference count. Useful if the user wants
  * to have a handle or timeout that doesn't keep the loop alive.
  */
-UV_EXTERN void uv_ref(uv_loop_t*);
-UV_EXTERN void uv_unref(uv_loop_t*);
+UV_EXTERN void uv_ref(uv_handle_t*);
+UV_EXTERN void uv_unref(uv_handle_t*);
 
 UV_EXTERN void uv_update_time(uv_loop_t*);
 UV_EXTERN int64_t uv_now(uv_loop_t*);
@@ -297,12 +300,14 @@ typedef void (*uv_async_cb)(uv_async_t* handle, int status);
 typedef void (*uv_prepare_cb)(uv_prepare_t* handle, int status);
 typedef void (*uv_check_cb)(uv_check_t* handle, int status);
 typedef void (*uv_idle_cb)(uv_idle_t* handle, int status);
-typedef void (*uv_getaddrinfo_cb)(uv_getaddrinfo_t* handle, int status,
-    struct addrinfo* res);
 typedef void (*uv_exit_cb)(uv_process_t*, int exit_status, int term_signal);
+typedef void (*uv_walk_cb)(uv_handle_t* handle, void* arg);
 typedef void (*uv_fs_cb)(uv_fs_t* req);
 typedef void (*uv_work_cb)(uv_work_t* req);
 typedef void (*uv_after_work_cb)(uv_work_t* req);
+typedef void (*uv_getaddrinfo_cb)(uv_getaddrinfo_t* req,
+                                  int status,
+                                  struct addrinfo* res);
 
 /*
 * This will be called repeatedly after the uv_fs_event_t is initialized.
@@ -312,6 +317,11 @@ typedef void (*uv_after_work_cb)(uv_work_t* req);
 */
 typedef void (*uv_fs_event_cb)(uv_fs_event_t* handle, const char* filename,
     int events, int status);
+
+typedef void (*uv_fs_poll_cb)(uv_fs_poll_t* handle,
+                              int status,
+                              const uv_statbuf_t* prev,
+                              const uv_statbuf_t* curr);
 
 typedef enum {
   UV_LEAVE_GROUP = 0,
@@ -338,12 +348,13 @@ UV_EXTERN const char* uv_err_name(uv_err_t err);
 
 
 #define UV_REQ_FIELDS \
-  /* read-only */ \
-  uv_req_type type; \
   /* public */ \
   void* data; \
   /* private */ \
-  UV_REQ_PRIVATE_FIELDS
+  ngx_queue_t active_queue; \
+  UV_REQ_PRIVATE_FIELDS \
+  /* read-only */ \
+  uv_req_type type; \
 
 /* Abstract base class of all requests. */
 struct uv_req_s {
@@ -374,15 +385,17 @@ struct uv_shutdown_s {
 };
 
 
-#define UV_HANDLE_FIELDS \
-  /* read-only */ \
-  uv_loop_t* loop; \
-  uv_handle_type type; \
-  /* public */ \
-  uv_close_cb close_cb; \
-  void* data; \
-  /* private */ \
-  UV_HANDLE_PRIVATE_FIELDS
+#define UV_HANDLE_FIELDS                                                      \
+  /* read-only */                                                             \
+  uv_loop_t* loop;                                                            \
+  /* public */                                                                \
+  uv_close_cb close_cb;                                                       \
+  void* data;                                                                 \
+  /* read-only */                                                             \
+  uv_handle_type type;                                                        \
+  /* private */                                                               \
+  ngx_queue_t handle_queue;                                                   \
+  UV_HANDLE_PRIVATE_FIELDS                                                    \
 
 /* The abstract base class of all handles.  */
 struct uv_handle_s {
@@ -408,6 +421,12 @@ UV_EXTERN size_t uv_req_size(uv_req_type type);
 UV_EXTERN int uv_is_active(const uv_handle_t* handle);
 
 /*
+ * Walk the list of open handles.
+ */
+UV_EXTERN void uv_walk(uv_loop_t* loop, uv_walk_cb walk_cb, void* arg);
+
+
+/*
  * Request handle to be closed. close_cb will be called asynchronously after
  * this call. This MUST be called on each handle before memory is released.
  *
@@ -424,7 +443,7 @@ UV_EXTERN void uv_close(uv_handle_t* handle, uv_close_cb close_cb);
  * base and len members of the uv_buf_t struct. The user is responsible for
  * freeing base after the uv_buf_t is done. Return struct passed by value.
  */
-UV_EXTERN uv_buf_t uv_buf_init(char* base, size_t len);
+UV_EXTERN uv_buf_t uv_buf_init(char* base, unsigned int len);
 
 
 /*
@@ -1140,22 +1159,59 @@ struct uv_getaddrinfo_s {
 /*
  * Asynchronous getaddrinfo(3).
  *
- * Return code 0 means that request is accepted and callback will be called
- * with result. Other return codes mean that there will not be a callback.
- * Input arguments may be released after return from this call.
+ * Either node or service may be NULL but not both.
  *
- * uv_freeaddrinfo() must be called after completion to free the addrinfo
- * structure.
+ * hints is a pointer to a struct addrinfo with additional address type
+ * constraints, or NULL. Consult `man -s 3 getaddrinfo` for details.
  *
- * On error NXDOMAIN the status code will be non-zero and UV_ENOENT returned.
+ * Returns 0 on success, -1 on error. Call uv_last_error() to get the error.
+ *
+ * If successful, your callback gets called sometime in the future with the
+ * lookup result, which is either:
+ *
+ *  a) status == 0, the res argument points to a valid struct addrinfo, or
+ *  b) status == -1, the res argument is NULL.
+ *
+ * On NXDOMAIN, the status code is -1 and uv_last_error() returns UV_ENOENT.
+ *
+ * Call uv_freeaddrinfo() to free the addrinfo structure.
  */
-UV_EXTERN int uv_getaddrinfo(uv_loop_t*, uv_getaddrinfo_t* handle,
-    uv_getaddrinfo_cb getaddrinfo_cb, const char* node, const char* service,
-    const struct addrinfo* hints);
+UV_EXTERN int uv_getaddrinfo(uv_loop_t* loop,
+                             uv_getaddrinfo_t* req,
+                             uv_getaddrinfo_cb getaddrinfo_cb,
+                             const char* node,
+                             const char* service,
+                             const struct addrinfo* hints);
 
+/*
+ * Free the struct addrinfo. Passing NULL is allowed and is a no-op.
+ */
 UV_EXTERN void uv_freeaddrinfo(struct addrinfo* ai);
 
 /* uv_spawn() options */
+typedef enum {
+  UV_IGNORE         = 0x00,
+  UV_CREATE_PIPE    = 0x01,
+  UV_INHERIT_FD     = 0x02,
+  UV_INHERIT_STREAM = 0x04,
+
+  /* When UV_CREATE_PIPE is specified, UV_READABLE_PIPE and UV_WRITABLE_PIPE
+   * determine the direction of flow, from the child process' perspective. Both
+   * flags may be specified to create a duplex data stream.
+   */
+  UV_READABLE_PIPE  = 0x10,
+  UV_WRITABLE_PIPE  = 0x20
+} uv_stdio_flags;
+
+typedef struct uv_stdio_container_s {
+  uv_stdio_flags flags;
+
+  union {
+    uv_stream_t* stream;
+    int fd;
+  } data;
+} uv_stdio_container_t;
+
 typedef struct uv_process_options_s {
   uv_exit_cb exit_cb; /* Called after the process exits. */
   const char* file; /* Path to program to execute. */
@@ -1188,14 +1244,18 @@ typedef struct uv_process_options_s {
    */
   uv_uid_t uid;
   uv_gid_t gid;
+
   /*
-   * The user should supply pointers to initialized uv_pipe_t structs for
-   * stdio. This is used to to send or receive input from the subprocess.
-   * The user is responsible for calling uv_close on them.
+   * The `stdio` field points to an array of uv_stdio_container_t structs that
+   * describe the file descriptors that will be made available to the child
+   * process. The convention is that stdio[0] points to stdin, fd 1 is used for
+   * stdout, and fd 2 is stderr.
+   *
+   * Note that on windows file descriptors greater than 2 are available to the
+   * child process only if the child processes uses the MSVCRT runtime.
    */
-  uv_pipe_t* stdin_stream;
-  uv_pipe_t* stdout_stream;
-  uv_pipe_t* stderr_stream;
+  int stdio_count;
+  uv_stdio_container_t* stdio;
 } uv_process_options_t;
 
 /*
@@ -1219,7 +1279,15 @@ enum uv_process_flags {
    * converting the argument list into a command line string. This option is
    * only meaningful on Windows systems. On unix it is silently ignored.
    */
-  UV_PROCESS_WINDOWS_VERBATIM_ARGUMENTS = (1 << 2)
+  UV_PROCESS_WINDOWS_VERBATIM_ARGUMENTS = (1 << 2),
+  /*
+   * Spawn the child process in a detached state - this will make it a process
+   * group leader, and will effectively enable the child to keep running after
+   * the parent exits.  Note that the child process will still keep the
+   * parent's event loop alive unless the parent process calls uv_unref() on
+   * the child's process handle.
+   */
+  UV_PROCESS_DETACHED = (1 << 3)
 };
 
 /*
@@ -1354,8 +1422,8 @@ typedef enum {
 /* uv_fs_t is a subclass of uv_req_t */
 struct uv_fs_s {
   UV_REQ_FIELDS
-  uv_loop_t* loop;
   uv_fs_type fs_type;
+  uv_loop_t* loop;
   uv_fs_cb cb;
   ssize_t result;
   void* ptr;
@@ -1432,6 +1500,12 @@ UV_EXTERN int uv_fs_link(uv_loop_t* loop, uv_fs_t* req, const char* path,
  */
 #define UV_FS_SYMLINK_DIR          0x0001
 
+/*
+ * This flag can be used with uv_fs_symlink on Windows
+ * to specify whether the symlink is to be created using junction points.
+ */
+#define UV_FS_SYMLINK_JUNCTION     0x0002
+
 UV_EXTERN int uv_fs_symlink(uv_loop_t* loop, uv_fs_t* req, const char* path,
     const char* new_path, int flags, uv_fs_cb cb);
 
@@ -1460,6 +1534,46 @@ struct uv_fs_event_s {
   UV_FS_EVENT_PRIVATE_FIELDS
 };
 
+
+/*
+ * uv_fs_stat() based polling file watcher.
+ */
+struct uv_fs_poll_s {
+  UV_HANDLE_FIELDS
+  /* Private, don't touch. */
+  int busy_polling; /* TODO(bnoordhuis) Fold into flags field. */
+  unsigned int interval;
+  uint64_t start_time;
+  char* path;
+  uv_fs_poll_cb poll_cb;
+  uv_timer_t timer_handle;
+  uv_fs_t* fs_req;
+  uv_statbuf_t statbuf;
+};
+
+UV_EXTERN int uv_fs_poll_init(uv_loop_t* loop, uv_fs_poll_t* handle);
+
+/*
+ * Check the file at `path` for changes every `interval` milliseconds.
+ *
+ * Your callback i invoked with `status == -1` if `path` does not exist
+ * or is inaccessible. The watcher is *not* stopped but your callback is
+ * not called again until something changes (e.g. when the file is created
+ * or the error reason changes).
+ *
+ * When `status == 0`, your callback receives pointers to the old and new
+ * `uv_statbuf_t` structs. They are valid for the duration of the callback
+ * only!
+ *
+ * For maximum portability, use multi-second intervals. Sub-second intervals
+ * will not detect all changes on many file systems.
+ */
+UV_EXTERN int uv_fs_poll_start(uv_fs_poll_t* handle,
+                               uv_fs_poll_cb poll_cb,
+                               const char* path,
+                               unsigned int interval);
+
+UV_EXTERN int uv_fs_poll_stop(uv_fs_poll_t* handle);
 
 /*
  * Gets load avg
@@ -1532,6 +1646,22 @@ UV_EXTERN extern uint64_t uv_hrtime(void);
 
 
 /*
+ * Disables inheritance for file descriptors / handles that this process
+ * inherited from its parent. The effect is that child processes spawned by
+ * this proces don't accidently inherit these handles.
+ *
+ * It is recommended to call this function as early in your program as possible,
+ * before the inherited file descriptors can be closed or duplicated.
+ *
+ * Note that this function works on a best-effort basis: there is no guarantee
+ * that libuv can discover all file descriptors that were inherited. In general
+ * it does a better job on Windows than it does on unix.
+ *
+ * TODO(bb): insert snarky remark to annoy bnoordhuis and the folks at joyent.
+ */
+UV_EXTERN void uv_disable_stdio_inheritance(void);
+
+/*
  * Opens a shared library. The filename is in utf-8. Returns 0 on success and
  * -1 on error. Call `uv_dlerror(uv_lib_t*)` to get the error message.
  */
@@ -1575,6 +1705,15 @@ UV_EXTERN void uv_rwlock_wrlock(uv_rwlock_t* rwlock);
 UV_EXTERN int uv_rwlock_trywrlock(uv_rwlock_t* rwlock);
 UV_EXTERN void uv_rwlock_wrunlock(uv_rwlock_t* rwlock);
 
+/*
+ * Same goes for the semaphore functions.
+ */
+UV_EXTERN int uv_sem_init(uv_sem_t* sem, unsigned int value);
+UV_EXTERN void uv_sem_destroy(uv_sem_t* sem);
+UV_EXTERN void uv_sem_post(uv_sem_t* sem);
+UV_EXTERN void uv_sem_wait(uv_sem_t* sem);
+UV_EXTERN int uv_sem_trywait(uv_sem_t* sem);
+
 /* Runs a function once and only once. Concurrent calls to uv_once() with the
  * same guard will block all callers except one (it's unspecified which one).
  * The guard should be initialized statically with the UV_ONCE_INIT macro.
@@ -1587,6 +1726,8 @@ UV_EXTERN int uv_thread_join(uv_thread_t *tid);
 
 /* the presence of these unions force similar struct layout */
 union uv_any_handle {
+  uv_handle_t handle;
+  uv_stream_t stream;
   uv_tcp_t tcp;
   uv_pipe_t pipe;
   uv_prepare_t prepare;
@@ -1594,8 +1735,12 @@ union uv_any_handle {
   uv_idle_t idle;
   uv_async_t async;
   uv_timer_t timer;
-  uv_getaddrinfo_t getaddrinfo;
   uv_fs_event_t fs_event;
+  uv_fs_poll_t fs_poll;
+  uv_poll_t poll;
+  uv_process_t process;
+  uv_tty_t tty;
+  uv_udp_t udp;
 };
 
 union uv_any_req {
@@ -1605,37 +1750,49 @@ union uv_any_req {
   uv_shutdown_t shutdown;
   uv_fs_t fs_req;
   uv_work_t work_req;
+  uv_udp_send_t udp_send_req;
+  uv_getaddrinfo_t getaddrinfo_req;
 };
 
 
 struct uv_counters_s {
+  uint64_t async_init;
+  uint64_t check_init;
   uint64_t eio_init;
-  uint64_t req_init;
+  uint64_t fs_event_init;
+  uint64_t fs_poll_init;
   uint64_t handle_init;
-  uint64_t stream_init;
-  uint64_t tcp_init;
-  uint64_t udp_init;
+  uint64_t idle_init;
   uint64_t pipe_init;
-  uint64_t tty_init;
   uint64_t poll_init;
   uint64_t prepare_init;
-  uint64_t check_init;
-  uint64_t idle_init;
-  uint64_t async_init;
-  uint64_t timer_init;
   uint64_t process_init;
-  uint64_t fs_event_init;
+  uint64_t req_init;
+  uint64_t stream_init;
+  uint64_t tcp_init;
+  uint64_t timer_init;
+  uint64_t tty_init;
+  uint64_t udp_init;
 };
 
 
 struct uv_loop_s {
   UV_LOOP_PRIVATE_FIELDS
+  ares_channel channel;
+  /* While the channel is active this timer is called once per second to be */
+  /* sure that we're always calling ares_process. See the warning above the */
+  /* definition of ares_timeout(). */
+  uv_timer_t ares_timer; \
   /* RB_HEAD(uv__ares_tasks, uv_ares_task_t) */
-  struct uv__ares_tasks { uv_ares_task_t* rbh_root; } uv_ares_handles_;
+  struct uv__ares_tasks { uv_ares_task_t* rbh_root; } ares_handles;
   /* Diagnostic counters */
   uv_counters_t counters;
   /* The last error */
   uv_err_t last_err;
+  /* Loop reference counting */
+  unsigned int active_handles;
+  ngx_queue_t handle_queue;
+  ngx_queue_t active_reqs;
   /* User data - use this for whatever. */
   void* data;
 };

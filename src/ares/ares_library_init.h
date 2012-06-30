@@ -29,7 +29,7 @@ typedef int MIB_TCP_STATE;
 #endif
 
 #include <iphlpapi.h>
-#include "ares_iphlpapi.h"
+#include <ares_iphlpapi.h>
 
 typedef DWORD (WINAPI *fpGetNetworkParams_t) (FIXED_INFO*, DWORD*);
 typedef BOOLEAN (APIENTRY *fpSystemFunction036_t) (void*, ULONG);

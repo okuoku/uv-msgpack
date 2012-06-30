@@ -1,4 +1,5 @@
 /* Copyright Joyent, Inc. and other Node contributors. All rights reserved.
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
  * deal in the Software without restriction, including without limitation the
@@ -18,62 +19,70 @@
  * IN THE SOFTWARE.
  */
 
+#include "task.h"
 #include "uv.h"
-#include "internal.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+
+#define NUM_TICKS (2 * 1000 * 1000)
+
+static unsigned long ticks;
+static uv_idle_t idle_handle;
+static uv_timer_t timer_handle;
 
 
-static void uv__prepare(EV_P_ ev_prepare* w, int revents) {
-  uv_prepare_t* prepare = container_of(w, uv_prepare_t, prepare_watcher);
-
-  if (prepare->prepare_cb) {
-    prepare->prepare_cb(prepare, 0);
-  }
+static void idle_cb(uv_idle_t* handle, int status) {
+  if (++ticks == NUM_TICKS)
+    uv_idle_stop(handle);
 }
 
 
-int uv_prepare_init(uv_loop_t* loop, uv_prepare_t* prepare) {
-  uv__handle_init(loop, (uv_handle_t*)prepare, UV_PREPARE);
-  loop->counters.prepare_init++;
+static void idle2_cb(uv_idle_t* handle, int status) {
+  ticks++;
+}
 
-  ev_prepare_init(&prepare->prepare_watcher, uv__prepare);
-  prepare->prepare_cb = NULL;
+
+static void timer_cb(uv_timer_t* handle, int status) {
+  uv_idle_stop(&idle_handle);
+  uv_timer_stop(&timer_handle);
+}
+
+
+BENCHMARK_IMPL(loop_count) {
+  uv_loop_t* loop = uv_default_loop();
+  uint64_t ns;
+
+  uv_idle_init(loop, &idle_handle);
+  uv_idle_start(&idle_handle, idle_cb);
+
+  ns = uv_hrtime();
+  uv_run(loop);
+  ns = uv_hrtime() - ns;
+
+  ASSERT(ticks == NUM_TICKS);
+
+  LOGF("loop_count: %d ticks in %.2fs (%.0f/s)\n",
+       NUM_TICKS,
+       ns / 1e9,
+       NUM_TICKS / (ns / 1e9));
 
   return 0;
 }
 
 
-int uv_prepare_start(uv_prepare_t* prepare, uv_prepare_cb cb) {
-  int was_active = ev_is_active(&prepare->prepare_watcher);
+BENCHMARK_IMPL(loop_count_timed) {
+  uv_loop_t* loop = uv_default_loop();
 
-  prepare->prepare_cb = cb;
+  uv_idle_init(loop, &idle_handle);
+  uv_idle_start(&idle_handle, idle2_cb);
 
-  ev_prepare_start(prepare->loop->ev, &prepare->prepare_watcher);
+  uv_timer_init(loop, &timer_handle);
+  uv_timer_start(&timer_handle, timer_cb, 5000, 0);
 
-  if (!was_active) {
-    ev_unref(prepare->loop->ev);
-  }
+  uv_run(loop);
+
+  LOGF("loop_count: %lu ticks (%.0f ticks/s)\n", ticks, ticks / 5.0);
 
   return 0;
-}
-
-
-int uv_prepare_stop(uv_prepare_t* prepare) {
-  int was_active = ev_is_active(&prepare->prepare_watcher);
-
-  ev_prepare_stop(prepare->loop->ev, &prepare->prepare_watcher);
-
-  if (was_active) {
-    ev_ref(prepare->loop->ev);
-  }
-  return 0;
-}
-
-
-int uv__prepare_active(const uv_prepare_t* handle) {
-  return ev_is_active(&handle->prepare_watcher);
-}
-
-
-void uv__prepare_close(uv_prepare_t* handle) {
-  uv_prepare_stop(handle);
 }

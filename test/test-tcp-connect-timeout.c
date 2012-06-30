@@ -25,62 +25,57 @@
 #include <stdlib.h>
 
 
-static uv_idle_t idle;
+static int connect_cb_called;
+static int close_cb_called;
 
-static const int max_opened = 10000;
-static const int max_delta = 4000;
+static uv_connect_t connect_req;
+static uv_timer_t timer;
+static uv_tcp_t conn;
 
-static int opened = 0;
-static int closed = 0;
+static void connect_cb(uv_connect_t* req, int status);
+static void timer_cb(uv_timer_t* handle, int status);
+static void close_cb(uv_handle_t* handle);
 
 
-void work_cb(uv_work_t* work) {
-  /* continue as fast as possible */
+static void connect_cb(uv_connect_t* req, int status) {
+  ASSERT(req == &connect_req);
+  ASSERT(status == -1);
+  connect_cb_called++;
 }
 
 
-void after_work_cb(uv_work_t* work) {
-  free(work);
-  closed++;
+static void timer_cb(uv_timer_t* handle, int status) {
+  ASSERT(handle == &timer);
+  uv_close((uv_handle_t*)&conn, close_cb);
+  uv_close((uv_handle_t*)&timer, close_cb);
 }
 
 
-void make_eio_req(void) {
-  uv_work_t* w;
-
-  opened++;
-
-  w = (uv_work_t*) malloc(sizeof(*w));
-  ASSERT(w != NULL);
-
-  uv_queue_work(uv_default_loop(), w, work_cb, after_work_cb);
+static void close_cb(uv_handle_t* handle) {
+  ASSERT(handle == (uv_handle_t*)&conn || handle == (uv_handle_t*)&timer);
+  close_cb_called++;
 }
 
 
-void idle_cb(uv_idle_t* idle, int status) {
-  ASSERT(opened - closed < max_delta);
-  if (opened <= max_opened) {
-    int i;
-    for (i = 0; i < 30; i++) {
-      make_eio_req();
-    }
-  } else {
-    int r;
-
-    r = uv_idle_stop(idle);
-    uv_unref(uv_default_loop());
-    ASSERT(r == 0);
-  }
-}
-
-
-TEST_IMPL(eio_overflow) {
+/* Verify that connecting to an unreachable address or port doesn't hang
+ * the event loop.
+ */
+TEST_IMPL(tcp_connect_timeout) {
+  struct sockaddr_in addr;
   int r;
 
-  r = uv_idle_init(uv_default_loop(), &idle);
+  addr = uv_ip4_addr("8.8.8.8", 9999);
+
+  r = uv_timer_init(uv_default_loop(), &timer);
   ASSERT(r == 0);
 
-  r = uv_idle_start(&idle, idle_cb);
+  r = uv_timer_start(&timer, timer_cb, 50, 0);
+  ASSERT(r == 0);
+
+  r = uv_tcp_init(uv_default_loop(), &conn);
+  ASSERT(r == 0);
+
+  r = uv_tcp_connect(&connect_req, &conn, addr, connect_cb);
   ASSERT(r == 0);
 
   r = uv_run(uv_default_loop());

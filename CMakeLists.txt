@@ -1,13 +1,17 @@
 PROJECT(uv)
 cmake_minimum_required(VERSION 2.8)
 
-include_directories(include include/uv-private src)
+include_directories(include include/uv-private src src/ares)
 add_definitions(-DHAVE_CONFIG_H)
 
 set(UV_COMMON_SRCS
     include/ares.h
     include/ares_version.h
     include/uv.h
+    include/uv-private/ngx-queue.h
+    include/uv-private/tree.h
+    src/cares.c
+    src/fs-poll.c
     src/uv-common.c
     src/uv-common.h
     src/ares/ares_cancel.c
@@ -43,7 +47,9 @@ set(UV_COMMON_SRCS
     src/ares/ares_parse_a_reply.c
     src/ares/ares_parse_mx_reply.c
     src/ares/ares_parse_ns_reply.c
+    src/ares/ares_parse_naptr_reply.c
     src/ares/ares_parse_ptr_reply.c
+    src/ares/ares_parse_soa_reply.c
     src/ares/ares_parse_srv_reply.c
     src/ares/ares_parse_txt_reply.c
     src/ares/ares_platform.h
@@ -78,7 +84,6 @@ set(UV_COMMON_SRCS
 
 
 set(UV_WIN32_SRCS
-    include/uv-private/tree.h
     include/uv-private/uv-win.h
     src/ares/config_win32/ares_config.h
     src/ares/windows_port.c
@@ -86,7 +91,6 @@ set(UV_WIN32_SRCS
     src/ares/ares_iphlpapi.h
     src/ares/ares_platform.c
     src/win/async.c
-    src/win/cares.c
     src/win/core.c
     src/win/dl.c
     src/win/error.c
@@ -94,14 +98,18 @@ set(UV_WIN32_SRCS
     src/win/fs-event.c
     src/win/getaddrinfo.c
     src/win/handle.c
-    #    src/win/internal.h
+    src/win/handle-inl.h
+    src/win/internal.h
     src/win/loop-watcher.c
     src/win/pipe.c
     src/win/thread.c
     src/win/poll.c
     src/win/process.c
+    src/win/process-stdio.c
     src/win/req.c
+    src/win/req-inl.h
     src/win/stream.c
+    src/win/stream-inl.h
     src/win/tcp.c
     src/win/tty.c
     src/win/threadpool.c
@@ -109,40 +117,36 @@ set(UV_WIN32_SRCS
     src/win/udp.c
     src/win/util.c
     src/win/winapi.c
-    #    src/win/winapi.h
+    src/win/winapi.h
     src/win/winsock.c
-    #    src/win/winsock.h
+    src/win/winsock.h
     )
 
 set(UV_POSIX_SRCS
-    # include/uv-private/eio.h
-    # include/uv-private/ev.h
-    # include/uv-private/ngx-queue.h
-    # include/uv-private/uv-unix.h
+    include/uv-private/eio.h
+    include/uv-private/ev.h
+    include/uv-private/uv-unix.h
     src/unix/async.c
-    src/unix/cares.c
-    src/unix/check.c
     src/unix/core.c
     src/unix/dl.c
     src/unix/error.c
     src/unix/thread.c
     src/unix/process.c
-    # src/unix/internal.h
-    # src/unix/eio/ecb.h
+    src/unix/internal.h
+    src/unix/eio/ecb.h
     src/unix/eio/eio.c
-    # src/unix/eio/xthread.h
+    src/unix/eio/xthread.h
     src/unix/error.c
     src/unix/ev/ev.c
-    # src/unix/ev/ev_vars.h
-    # src/unix/ev/ev_wrap.h
-    # src/unix/ev/event.h
+    src/unix/ev/ev_vars.h
+    src/unix/ev/ev_wrap.h
+    src/unix/ev/event.h
     src/unix/fs.c
-    src/unix/idle.c
-    # src/unix/internal.h
+    src/unix/internal.h
     src/unix/loop.c
+    src/unix/loop-watcher.c
     src/unix/pipe.c
     src/unix/poll.c
-    src/unix/prepare.c
     src/unix/process.c
     src/unix/tcp.c
     src/unix/thread.c
@@ -150,7 +154,7 @@ set(UV_POSIX_SRCS
     src/unix/tty.c
     src/unix/udp.c
     src/unix/uv-eio.c
-    # src/unix/uv-eio.h
+    src/unix/uv-eio.h
     )
 
 set(UV_TEST_SRCS
@@ -158,17 +162,17 @@ set(UV_TEST_SRCS
     test/echo-server.c
     test/run-tests.c
     test/runner.c
-    # test/runner.h
+    test/runner.h
     test/test-get-loadavg.c
-    # test/task.h
+    test/task.h
     test/test-util.c
     test/test-async.c
     test/test-error.c
     test/test-callback-stack.c
+    test/test-callback-order.c
     test/test-connection-fail.c
     test/test-cwd-and-chdir.c
     test/test-delayed-accept.c
-    test/test-eio-overflow.c
     test/test-fail-always.c
     test/test-fs.c
     test/test-fs-event.c
@@ -183,6 +187,7 @@ set(UV_TEST_SRCS
     test/test-ipc-send-recv.c
     test/test-list.h
     test/test-loop-handles.c
+    test/test-walk-handles.c
     test/test-multiple-listen.c
     test/test-pass-always.c
     test/test-ping-pong.c
@@ -190,17 +195,25 @@ set(UV_TEST_SRCS
     test/test-pipe-connect-error.c
     test/test-platform-output.c
     test/test-poll.c
+    test/test-poll-close.c
     test/test-process-title.c
     test/test-ref.c
+    test/test-run-once.c
+    test/test-semaphore.c
     test/test-shutdown-close.c
     test/test-shutdown-eof.c
     test/test-spawn.c
+    test/test-fs-poll.c
     test/test-stdio-over-pipes.c
     test/test-tcp-bind-error.c
     test/test-tcp-bind6-error.c
     test/test-tcp-close.c
+    test/test-tcp-close-while-connecting.c
+    test/test-tcp-connect-error-after-write.c
+    test/test-tcp-shutdown-after-write.c
     test/test-tcp-flags.c
     test/test-tcp-connect-error.c
+    test/test-tcp-connect-timeout.c
     test/test-tcp-connect6-error.c
     test/test-tcp-write-error.c
     test/test-tcp-write-to-half-open-connection.c
@@ -223,8 +236,13 @@ set(UV_TEST_SRCS
 
 set(UV_BENCHMARK_SRCS
     test/benchmark-ares.c
+    test/benchmark-async.c
+    test/benchmark-async-pummel.c
+    test/benchmark-fs-stat.c
     test/benchmark-getaddrinfo.c
-    # test/benchmark-list.h
+    test/benchmark-list.h
+    test/benchmark-loop-count.c
+    test/benchmark-million-timers.c
     test/benchmark-ping-pongs.c
     test/benchmark-pound.c
     test/benchmark-pump.c
@@ -238,8 +256,8 @@ set(UV_BENCHMARK_SRCS
     test/blackhole-server.c
     test/run-benchmarks.c
     test/runner.c
-    # test/runner.h
-    # test/task.h
+    test/runner.h
+    test/task.h
     )
 
 # set UV_SRCS and UV_LIBS
@@ -276,7 +294,7 @@ else()
         set(UV_SRCS
             ${UV_POSIX_SRCS}
             ${UV_COMMON_SRCS}
-            src/unix/linux/core.c
+            src/unix/linux/linux-core.c
             src/unix/linux/inotify.c
             src/unix/linux/syscalls.c
             # src/unix/linux/syscalls.h

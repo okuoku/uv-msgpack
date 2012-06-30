@@ -1,4 +1,5 @@
 /* Copyright Joyent, Inc. and other Node contributors. All rights reserved.
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
  * deal in the Software without restriction, including without limitation the
@@ -18,62 +19,51 @@
  * IN THE SOFTWARE.
  */
 
+#include "task.h"
 #include "uv.h"
-#include "internal.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+
+#define NUM_PINGS (1000 * 1000)
+
+static unsigned int callbacks;
+static volatile int done;
 
 
-static void uv__idle(EV_P_ ev_idle* w, int revents) {
-  uv_idle_t* idle = container_of(w, uv_idle_t, idle_watcher);
-
-  if (idle->idle_cb) {
-    idle->idle_cb(idle, 0);
-  }
+static void async_cb(uv_async_t* handle, int status) {
+  if (++callbacks == NUM_PINGS)
+    uv_close((uv_handle_t*) handle, NULL);
 }
 
 
-int uv_idle_init(uv_loop_t* loop, uv_idle_t* idle) {
-  uv__handle_init(loop, (uv_handle_t*)idle, UV_IDLE);
-  loop->counters.idle_init++;
+static void pummel(void* arg) {
+  while (!done)
+    uv_async_send((uv_async_t*) arg);
+}
 
-  ev_idle_init(&idle->idle_watcher, uv__idle);
-  idle->idle_cb = NULL;
+
+BENCHMARK_IMPL(async_pummel) {
+  uv_async_t handle;
+  uv_thread_t tid;
+  uint64_t time;
+
+  ASSERT(0 == uv_async_init(uv_default_loop(), &handle, async_cb));
+  ASSERT(0 == uv_thread_create(&tid, pummel, &handle));
+
+  time = uv_hrtime();
+
+  ASSERT(0 == uv_run(uv_default_loop()));
+
+  time = uv_hrtime() - time;
+  done = 1;
+
+  ASSERT(0 == uv_thread_join(&tid));
+
+  printf("%s callbacks in %.2f seconds (%s/sec)\n",
+         fmt(callbacks),
+         time / 1e9,
+         fmt(callbacks / (time / 1e9)));
 
   return 0;
-}
-
-
-int uv_idle_start(uv_idle_t* idle, uv_idle_cb cb) {
-  int was_active = ev_is_active(&idle->idle_watcher);
-
-  idle->idle_cb = cb;
-  ev_idle_start(idle->loop->ev, &idle->idle_watcher);
-
-  if (!was_active) {
-    ev_unref(idle->loop->ev);
-  }
-
-  return 0;
-}
-
-
-int uv_idle_stop(uv_idle_t* idle) {
-  int was_active = ev_is_active(&idle->idle_watcher);
-
-  ev_idle_stop(idle->loop->ev, &idle->idle_watcher);
-
-  if (was_active) {
-    ev_ref(idle->loop->ev);
-  }
-
-  return 0;
-}
-
-
-int uv__idle_active(const uv_idle_t* handle) {
-  return ev_is_active(&handle->idle_watcher);
-}
-
-
-void uv__idle_close(uv_idle_t* handle) {
-  uv_idle_stop(handle);
 }
