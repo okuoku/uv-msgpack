@@ -18,7 +18,7 @@ http://nodejs.org/
 
  * Child process spawning
 
- * Asynchronous DNS via c-ares or `uv_getaddrinfo`.
+ * Asynchronous DNS via `uv_getaddrinfo`.
 
  * Asynchronous file system APIs `uv_fs_*`
 
@@ -36,11 +36,16 @@ http://nodejs.org/
 
  * IPC and socket sharing between processes `uv_write2`
 
+## Community
+
+ * [Mailing list](http://groups.google.com/group/libuv)
 
 ## Documentation
 
-See `include/uv.h`.
-
+ * [include/uv.h](https://github.com/joyent/libuv/blob/master/include/uv.h)
+   &mdash; API documentation in the form of detailed header comments.
+ * [An Introduction to libuv](http://nikhilm.github.com/uvbook/) &mdash; An
+   overview of libuv with tutorials.
 
 ## Build Instructions
 
@@ -75,6 +80,9 @@ Macintosh users run
     ./gyp_uv -f xcode
     xcodebuild -project uv.xcodeproj -configuration Release -target All
 
+Note for Linux users: compile your project with `-D_GNU_SOURCE` when you
+include `uv.h`. GYP builds take care of that automatically. If you use
+autotools, add a `AC_GNU_SOURCE` declaration to your `configure.ac`.
 
 ## Supported Platforms
 

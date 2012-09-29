@@ -28,7 +28,7 @@
 #include <assert.h>
 #include <stdlib.h> /* abort */
 
-#if __STRICT_ANSI__
+#if defined(__STRICT_ANSI__)
 # define inline __inline
 #endif
 
@@ -63,6 +63,10 @@
 # define HAVE_KQUEUE 1
 #endif
 
+#if defined(__APPLE__) && !defined(TARGET_OS_IPHONE)
+# include <CoreServices/CoreServices.h>
+#endif
+
 #define UNREACHABLE()                                                         \
   do {                                                                        \
     assert(0 && "unreachable code");                                          \
@@ -82,7 +86,7 @@
 #define UV__IO_WRITE EV_WRITE
 #define UV__IO_ERROR EV_ERROR
 
-/* flags */
+/* handle flags */
 enum {
   UV_CLOSING          = 0x01,   /* uv_close() called but not finished. */
   UV_CLOSED           = 0x02,   /* close(2) finished. */
@@ -93,13 +97,18 @@ enum {
   UV_STREAM_WRITABLE  = 0x40,   /* The stream is writable */
   UV_STREAM_BLOCKING  = 0x80,   /* Synchronous writes. */
   UV_TCP_NODELAY      = 0x100,  /* Disable Nagle. */
-  UV_TCP_KEEPALIVE    = 0x200   /* Turn on keep-alive. */
+  UV_TCP_KEEPALIVE    = 0x200,  /* Turn on keep-alive. */
+  UV_TCP_SINGLE_ACCEPT = 0x400  /* Only accept() when idle. */
 };
 
-inline static void uv__req_init(uv_loop_t* loop,
-                                uv_req_t* req,
-                                uv_req_type type) {
-  loop->counters.req_init++;
+/* loop flags */
+enum {
+  UV_LOOP_EIO_INITIALIZED = 1
+};
+
+__attribute__((unused))
+__attribute__((always_inline))
+static void uv__req_init(uv_loop_t* loop, uv_req_t* req, uv_req_type type) {
   req->type = type;
   uv__req_register(loop, req);
 }
@@ -139,8 +148,6 @@ int uv__stream_open(uv_stream_t*, int fd, int flags);
 void uv__stream_destroy(uv_stream_t* stream);
 void uv__server_io(uv_loop_t* loop, uv__io_t* watcher, int events);
 int uv__accept(int sockfd);
-int uv__connect(uv_connect_t* req, uv_stream_t* stream, struct sockaddr* addr,
-    socklen_t addrlen, uv_connect_cb cb);
 
 /* tcp */
 int uv_tcp_listen(uv_tcp_t* tcp, int backlog, uv_connection_cb cb);
@@ -154,6 +161,14 @@ int uv_pipe_listen(uv_pipe_t* handle, int backlog, uv_connection_cb cb);
 void uv__run_timers(uv_loop_t* loop);
 unsigned int uv__next_timeout(uv_loop_t* loop);
 
+/* signal */
+void uv__signal_close(uv_signal_t* handle);
+void uv__signal_unregister(uv_loop_t* loop);
+
+/* platform specific */
+int uv__platform_loop_init(uv_loop_t* loop, int default_loop);
+void uv__platform_loop_delete(uv_loop_t* loop);
+
 /* various */
 void uv__async_close(uv_async_t* handle);
 void uv__check_close(uv_check_t* handle);
@@ -164,6 +179,7 @@ void uv__poll_close(uv_poll_t* handle);
 void uv__prepare_close(uv_prepare_t* handle);
 void uv__process_close(uv_process_t* handle);
 void uv__stream_close(uv_stream_t* handle);
+void uv__tcp_close(uv_tcp_t* handle);
 void uv__timer_close(uv_timer_t* handle);
 void uv__udp_close(uv_udp_t* handle);
 void uv__udp_finish_close(uv_udp_t* handle);
@@ -176,5 +192,33 @@ void uv__udp_finish_close(uv_udp_t* handle);
 
 int uv__make_socketpair(int fds[2], int flags);
 int uv__make_pipe(int fds[2], int flags);
+
+#if defined(__APPLE__)
+typedef void (*cf_loop_signal_cb)(void*);
+
+void uv__cf_loop_signal(uv_loop_t* loop, cf_loop_signal_cb cb, void* arg);
+
+int uv__fsevents_init(uv_fs_event_t* handle);
+int uv__fsevents_close(uv_fs_event_t* handle);
+
+/* OSX < 10.7 has no file events, polyfill them */
+#ifndef MAC_OS_X_VERSION_10_7
+
+static const int kFSEventStreamCreateFlagFileEvents = 0x00000010;
+static const int kFSEventStreamEventFlagItemCreated = 0x00000100;
+static const int kFSEventStreamEventFlagItemRemoved = 0x00000200;
+static const int kFSEventStreamEventFlagItemInodeMetaMod = 0x00000400;
+static const int kFSEventStreamEventFlagItemRenamed = 0x00000800;
+static const int kFSEventStreamEventFlagItemModified = 0x00001000;
+static const int kFSEventStreamEventFlagItemFinderInfoMod = 0x00002000;
+static const int kFSEventStreamEventFlagItemChangeOwner = 0x00004000;
+static const int kFSEventStreamEventFlagItemXattrMod = 0x00008000;
+static const int kFSEventStreamEventFlagItemIsFile = 0x00010000;
+static const int kFSEventStreamEventFlagItemIsDir = 0x00020000;
+static const int kFSEventStreamEventFlagItemIsSymlink = 0x00040000;
+
+#endif /* __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1070 */
+
+#endif /* defined(__APPLE__) */
 
 #endif /* UV_UNIX_INTERNAL_H_ */

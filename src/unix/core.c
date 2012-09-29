@@ -49,10 +49,14 @@
 
 #ifdef __APPLE__
 # include <mach-o/dyld.h> /* _NSGetExecutablePath */
+# include <sys/filio.h>
+# include <sys/ioctl.h>
 #endif
 
 #ifdef __FreeBSD__
 # include <sys/sysctl.h>
+# include <sys/filio.h>
+# include <sys/ioctl.h>
 # include <sys/wait.h>
 #endif
 
@@ -69,8 +73,11 @@ void uv_close(uv_handle_t* handle, uv_close_cb close_cb) {
     break;
 
   case UV_TTY:
-  case UV_TCP:
     uv__stream_close((uv_stream_t*)handle);
+    break;
+
+  case UV_TCP:
+    uv__tcp_close((uv_tcp_t*)handle);
     break;
 
   case UV_UDP:
@@ -113,6 +120,10 @@ void uv_close(uv_handle_t* handle, uv_close_cb close_cb) {
     uv__fs_poll_close((uv_fs_poll_t*)handle);
     break;
 
+  case UV_SIGNAL:
+    uv__signal_close((uv_signal_t*)handle);
+    break;
+
   default:
     assert(0);
   }
@@ -140,6 +151,7 @@ static void uv__finish_close(uv_handle_t* handle) {
     case UV_FS_EVENT:
     case UV_FS_POLL:
     case UV_POLL:
+    case UV_SIGNAL:
       break;
 
     case UV_NAMED_PIPE:
@@ -228,7 +240,7 @@ void uv_loop_delete(uv_loop_t* loop) {
 
 
 static unsigned int uv__poll_timeout(uv_loop_t* loop) {
-  if (!uv__has_active_handles(loop))
+  if (!uv__has_active_handles(loop) && !uv__has_active_reqs(loop))
     return 0;
 
   if (!ngx_queue_empty(&loop->idle_handles))
@@ -284,134 +296,6 @@ int64_t uv_now(uv_loop_t* loop) {
 
 int uv_is_active(const uv_handle_t* handle) {
   return uv__is_active(handle);
-}
-
-
-static int uv_getaddrinfo_done(eio_req* req_) {
-  uv_getaddrinfo_t* req = req_->data;
-  struct addrinfo *res = req->res;
-#if __sun
-  size_t hostlen = strlen(req->hostname);
-#endif
-
-  req->res = NULL;
-
-  uv__req_unregister(req->loop, req);
-
-  /* see initialization in uv_getaddrinfo() */
-  if (req->hints)
-    free(req->hints);
-  else if (req->service)
-    free(req->service);
-  else if (req->hostname)
-    free(req->hostname);
-  else
-    assert(0);
-
-  if (req->retcode == 0) {
-    /* OK */
-#if EAI_NODATA /* FreeBSD deprecated EAI_NODATA */
-  } else if (req->retcode == EAI_NONAME || req->retcode == EAI_NODATA) {
-#else
-  } else if (req->retcode == EAI_NONAME) {
-#endif
-    uv__set_sys_error(req->loop, ENOENT); /* FIXME compatibility hack */
-#if __sun
-  } else if (req->retcode == EAI_MEMORY && hostlen >= MAXHOSTNAMELEN) {
-    uv__set_sys_error(req->loop, ENOENT);
-#endif
-  } else {
-    req->loop->last_err.code = UV_EADDRINFO;
-    req->loop->last_err.sys_errno_ = req->retcode;
-  }
-
-  req->cb(req, req->retcode, res);
-
-  return 0;
-}
-
-
-static void getaddrinfo_thread_proc(eio_req *req_) {
-  uv_getaddrinfo_t* req = req_->data;
-
-  req->retcode = getaddrinfo(req->hostname,
-                             req->service,
-                             req->hints,
-                             &req->res);
-}
-
-
-int uv_getaddrinfo(uv_loop_t* loop,
-                   uv_getaddrinfo_t* req,
-                   uv_getaddrinfo_cb cb,
-                   const char* hostname,
-                   const char* service,
-                   const struct addrinfo* hints) {
-  size_t hostname_len;
-  size_t service_len;
-  size_t hints_len;
-  eio_req* req_;
-  size_t len;
-  char* buf;
-
-  if (req == NULL || cb == NULL || (hostname == NULL && service == NULL))
-    return uv__set_artificial_error(loop, UV_EINVAL);
-
-  uv_eio_init(loop);
-
-  hostname_len = hostname ? strlen(hostname) + 1 : 0;
-  service_len = service ? strlen(service) + 1 : 0;
-  hints_len = hints ? sizeof(*hints) : 0;
-  buf = malloc(hostname_len + service_len + hints_len);
-
-  if (buf == NULL)
-    return uv__set_artificial_error(loop, UV_ENOMEM);
-
-  uv__req_init(loop, req, UV_GETADDRINFO);
-  req->loop = loop;
-  req->cb = cb;
-  req->res = NULL;
-  req->hints = NULL;
-  req->service = NULL;
-  req->hostname = NULL;
-  req->retcode = 0;
-
-  /* order matters, see uv_getaddrinfo_done() */
-  len = 0;
-
-  if (hints) {
-    req->hints = memcpy(buf + len, hints, sizeof(*hints));
-    len += sizeof(*hints);
-  }
-
-  if (service) {
-    req->service = memcpy(buf + len, service, service_len);
-    len += service_len;
-  }
-
-  if (hostname) {
-    req->hostname = memcpy(buf + len, hostname, hostname_len);
-    len += hostname_len;
-  }
-
-  req_ = eio_custom(getaddrinfo_thread_proc,
-                    EIO_PRI_DEFAULT,
-                    uv_getaddrinfo_done,
-                    req,
-                    &loop->uv_eio_channel);
-
-  if (req_)
-    return 0;
-
-  free(buf);
-
-  return uv__set_artificial_error(loop, UV_ENOMEM);
-}
-
-
-void uv_freeaddrinfo(struct addrinfo* ai) {
-  if (ai)
-    freeaddrinfo(ai);
 }
 
 
@@ -495,7 +379,7 @@ skip:
 }
 
 
-#if __linux__
+#if defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__)
 
 int uv__nonblock(int fd, int set) {
   int r;
@@ -518,7 +402,7 @@ int uv__cloexec(int fd, int set) {
   return r;
 }
 
-#else /* !__linux__ */
+#else /* !(defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__)) */
 
 int uv__nonblock(int fd, int set) {
   int flags;
@@ -567,7 +451,7 @@ int uv__cloexec(int fd, int set) {
   return r;
 }
 
-#endif /* __linux__ */
+#endif /* defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__) */
 
 
 /* This function is not execve-safe, there is a race window

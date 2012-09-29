@@ -3,95 +3,22 @@ PROJECT(uv)
 cmake_minimum_required(VERSION 2.8)
 
 include_directories(include include/uv-private src src/ares)
-add_definitions(-DHAVE_CONFIG_H)
 
 set(UV_COMMON_SRCS
-    include/ares.h
-    include/ares_version.h
     include/uv.h
     include/uv-private/ngx-queue.h
     include/uv-private/tree.h
-    src/cares.c
     src/fs-poll.c
+    src/inet.c
     src/uv-common.c
     src/uv-common.h
-    src/ares/ares_cancel.c
-    src/ares/ares__close_sockets.c
-    src/ares/ares_data.c
-    src/ares/ares_data.h
-    src/ares/ares_destroy.c
-    src/ares/ares_dns.h
-    src/ares/ares_expand_name.c
-    src/ares/ares_expand_string.c
-    src/ares/ares_fds.c
-    src/ares/ares_free_hostent.c
-    src/ares/ares_free_string.c
-    src/ares/ares_getenv.h
-    src/ares/ares_gethostbyaddr.c
-    src/ares/ares_gethostbyname.c
-    src/ares/ares__get_hostent.c
-    src/ares/ares_getnameinfo.c
-    src/ares/ares_getopt.c
-    src/ares/ares_getopt.h
-    src/ares/ares_getsock.c
-    src/ares/ares_init.c
-    src/ares/ares_ipv6.h
-    src/ares/ares_library_init.c
-    src/ares/ares_library_init.h
-    src/ares/ares_llist.c
-    src/ares/ares_llist.h
-    src/ares/ares_mkquery.c
-    src/ares/ares_nowarn.c
-    src/ares/ares_nowarn.h
-    src/ares/ares_options.c
-    src/ares/ares_parse_aaaa_reply.c
-    src/ares/ares_parse_a_reply.c
-    src/ares/ares_parse_mx_reply.c
-    src/ares/ares_parse_ns_reply.c
-    src/ares/ares_parse_naptr_reply.c
-    src/ares/ares_parse_ptr_reply.c
-    src/ares/ares_parse_soa_reply.c
-    src/ares/ares_parse_srv_reply.c
-    src/ares/ares_parse_txt_reply.c
-    src/ares/ares_platform.h
-    src/ares/ares_private.h
-    src/ares/ares_process.c
-    src/ares/ares_query.c
-    src/ares/ares__read_line.c
-    src/ares/ares_rules.h
-    src/ares/ares_search.c
-    src/ares/ares_send.c
-    src/ares/ares_setup.h
-    src/ares/ares_strcasecmp.c
-    src/ares/ares_strcasecmp.h
-    src/ares/ares_strdup.c
-    src/ares/ares_strdup.h
-    src/ares/ares_strerror.c
-    src/ares/ares_timeout.c
-    src/ares/ares__timeval.c
-    src/ares/ares_version.c
-    src/ares/ares_writev.c
-    src/ares/ares_writev.h
-    src/ares/bitncmp.c
-    src/ares/bitncmp.h
-    src/ares/inet_net_pton.c
-    src/ares/inet_net_pton.h
-    src/ares/inet_ntop.c
-    src/ares/inet_ntop.h
-    src/ares/nameser.h
-    src/ares/setup_once.h
-    src/ares/windows_port.c
     )
 
 
 set(UV_WIN32_SRCS
     include/uv-private/uv-win.h
-    src/ares/config_win32/ares_config.h
-    src/ares/windows_port.c
-    src/ares/ares_getenv.c
-    src/ares/ares_iphlpapi.h
-    src/ares/ares_platform.c
     src/win/async.c
+    src/win/atomicops-inl.h
     src/win/core.c
     src/win/dl.c
     src/win/error.c
@@ -109,6 +36,7 @@ set(UV_WIN32_SRCS
     src/win/process-stdio.c
     src/win/req.c
     src/win/req-inl.h
+    src/win/signal.c
     src/win/stream.c
     src/win/stream-inl.h
     src/win/tcp.c
@@ -127,13 +55,13 @@ set(UV_POSIX_SRCS
     include/uv-private/eio.h
     include/uv-private/ev.h
     include/uv-private/uv-unix.h
+    include/uv-private/uv-linux.h
+    include/uv-private/uv-sunos.h
+    include/uv-private/uv-darwin.h
+    include/uv-private/uv-bsd.h
     src/unix/async.c
     src/unix/core.c
     src/unix/dl.c
-    src/unix/error.c
-    src/unix/thread.c
-    src/unix/process.c
-    src/unix/internal.h
     src/unix/eio/ecb.h
     src/unix/eio/eio.c
     src/unix/eio/xthread.h
@@ -143,12 +71,14 @@ set(UV_POSIX_SRCS
     src/unix/ev/ev_wrap.h
     src/unix/ev/event.h
     src/unix/fs.c
+    src/unix/getaddrinfo.c
     src/unix/internal.h
     src/unix/loop.c
     src/unix/loop-watcher.c
     src/unix/pipe.c
     src/unix/poll.c
     src/unix/process.c
+    src/unix/signal.c
     src/unix/stream.c
     src/unix/tcp.c
     src/unix/thread.c
@@ -168,20 +98,20 @@ set(UV_TEST_SRCS
     test/test-get-loadavg.c
     test/task.h
     test/test-util.c
+    test/test-active.c
     test/test-async.c
-    test/test-error.c
     test/test-callback-stack.c
     test/test-callback-order.c
     test/test-connection-fail.c
     test/test-cwd-and-chdir.c
     test/test-delayed-accept.c
+    test/test-error.c
     test/test-fail-always.c
     test/test-fs.c
     test/test-fs-event.c
     test/test-get-currentexe.c
     test/test-get-memory.c
     test/test-getaddrinfo.c
-    test/test-gethostbyname.c
     test/test-getsockname.c
     test/test-hrtime.c
     test/test-idle.c
@@ -204,6 +134,7 @@ set(UV_TEST_SRCS
     test/test-semaphore.c
     test/test-shutdown-close.c
     test/test-shutdown-eof.c
+    test/test-signal.c
     test/test-spawn.c
     test/test-fs-poll.c
     test/test-stdio-over-pipes.c
@@ -217,27 +148,29 @@ set(UV_TEST_SRCS
     test/test-tcp-connect-error.c
     test/test-tcp-connect-timeout.c
     test/test-tcp-connect6-error.c
+    test/test-tcp-open.c
     test/test-tcp-write-error.c
     test/test-tcp-write-to-half-open-connection.c
     test/test-tcp-writealot.c
+    test/test-tcp-unexpected-read.c
     test/test-threadpool.c
     test/test-mutexes.c
+    test/test-signal.c
     test/test-thread.c
     test/test-timer-again.c
     test/test-timer.c
     test/test-tty.c
     test/test-udp-dgram-too-big.c
     test/test-udp-ipv6.c
+    test/test-udp-open.c
     test/test-udp-options.c
     test/test-udp-send-and-recv.c
     test/test-udp-multicast-join.c
-    test/test-counters-init.c
     test/test-dlerror.c
     test/test-udp-multicast-ttl.c
     )
 
 set(UV_BENCHMARK_SRCS
-    test/benchmark-ares.c
     test/benchmark-async.c
     test/benchmark-async-pummel.c
     test/benchmark-fs-stat.c
@@ -245,6 +178,7 @@ set(UV_BENCHMARK_SRCS
     test/benchmark-list.h
     test/benchmark-loop-count.c
     test/benchmark-million-timers.c
+    test/benchmark-multi-accept.c
     test/benchmark-ping-pongs.c
     test/benchmark-pound.c
     test/benchmark-pump.c
@@ -252,7 +186,7 @@ set(UV_BENCHMARK_SRCS
     test/benchmark-spawn.c
     test/benchmark-thread.c
     test/benchmark-tcp-write-batch.c
-    test/benchmark-udp-packet-storm.c
+    test/benchmark-udp-pummel.c
     test/dns-server.c
     test/echo-server.c
     test/blackhole-server.c
@@ -265,7 +199,6 @@ set(UV_BENCHMARK_SRCS
 # set UV_SRCS and UV_LIBS
 
 if(WIN32)
-    include_directories(src/ares/config_win32)
     add_definitions(-D_WIN32_WINNT=0x0600 -DEIO_STACKSIZE=262144 -D_GNU_SOURCE)
     set(UV_SRCS ${UV_WIN32_SRCS} ${UV_COMMON_SRCS})
     set(UV_TESTRUNNER_SRCS test/runner-win.c test/runner-win.h)
@@ -283,29 +216,27 @@ else()
             -D_DARWIN_USE_64_BIT_INODE=1
             -DEV_CONFIG_H=\"config_darwin.h\"
             -DEIO_CONFIG_H=\"config_darwin.h\")
-        include_directories(src/ares/config_darwin)
         set(UV_SRCS
             ${UV_POSIX_SRCS}
             ${UV_COMMON_SRCS}
             src/unix/darwin.c
+            src/unix/fsevents.c
             src/unix/kqueue.c)
         set(UV_LIBS m)
     elseif(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
         add_definitions(-DEV_CONFIG_H=\"config_linux.h\" -DEIO_CONFIG_H=\"config_linux.h\")
-        include_directories(src/ares/config_linux)
         set(UV_SRCS
             ${UV_POSIX_SRCS}
             ${UV_COMMON_SRCS}
             src/unix/linux/linux-core.c
             src/unix/linux/inotify.c
             src/unix/linux/syscalls.c
-            # src/unix/linux/syscalls.h
+            src/unix/linux/syscalls.h
             )
         set(UV_LIBS rt m dl)
     elseif(${CMAKE_SYSTEM_NAME} STREQUAL "FreeBSD")
         add_definitions(-DEV_CONFIG_H=\"config_freebsd.h\"
             -DEIO_CONFIG_H=\"config_freebsd.h\")
-        include_directories(src/ares/config_freebsd)
         set(UV_SRCS
             ${UV_POSIX_SRCS}
             ${UV_COMMON_SRCS}
@@ -316,7 +247,6 @@ else()
     elseif(${CMAKE_SYSTEM_NAME} STREQUAL "CYGWIN")
         add_definitions(-DEV_CONFIG_H=\"config_cygwin.h\" 
             -DEIO_CONFIG_H=\"config_cygwin.h\")
-        include_directories(src/ares/config_cygwin)
         set(UV_SRCS
             ${UV_POSIX_SRCS}
             ${UV_COMMON_SRCS}

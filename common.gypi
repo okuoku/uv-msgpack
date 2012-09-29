@@ -6,6 +6,8 @@
     'library%': 'static_library',    # allow override to 'shared_library' for DLL/.so builds
     'component%': 'static_library',  # NB. these names match with what V8 expects
     'msvs_multi_core_compile': '0',  # we do enable multicore compiles, but not using the V8 way
+    'gcc_version%': 'unknown',
+    'clang%': 0,
   },
 
   'target_defaults': {
@@ -115,11 +117,13 @@
           # POSIX names
           '_CRT_NONSTDC_NO_DEPRECATE',
         ],
+        'target_conditions': [
+          ['target_arch=="x64"', {
+            'msvs_configuration_platform': 'x64'
+          }]
+        ]
       }],
       [ 'OS=="linux" or OS=="freebsd" or OS=="openbsd" or OS=="solaris"', {
-        'variables': {
-          'gcc_version%': '<!(python build/gcc_version.py)>)',
-        },
         'cflags': [ '-Wall' ],
         'cflags_cc': [ '-fno-rtti', '-fno-exceptions' ],
         'conditions': [
@@ -137,7 +141,7 @@
             'cflags': [ '-pthread' ],
             'ldflags': [ '-pthread' ],
           }],
-          [ 'visibility=="hidden" and gcc_version >= "4.0.0"', {
+          [ 'visibility=="hidden" and (clang==1 or gcc_version >= 40)', {
             'cflags': [ '-fvisibility=hidden' ],
           }],
         ],

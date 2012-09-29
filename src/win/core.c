@@ -55,6 +55,9 @@ static void uv_init(void) {
   /* Initialize FS */
   uv_fs_init();
 
+  /* Initialize signal stuff */
+  uv_signals_init();
+
   /* Initialize console */
   uv_console_init();
 
@@ -70,6 +73,9 @@ static void uv_loop_init(uv_loop_t* loop) {
     uv_fatal_error(GetLastError(), "CreateIoCompletionPort");
   }
 
+  /* To prevent uninitialized memory access, loop->time must be intialized */
+  /* to zero before calling uv_update_time for the first time. */
+  loop->time = 0;
   uv_update_time(loop);
 
   ngx_queue_init(&loop->handle_queue);
@@ -92,15 +98,10 @@ static void uv_loop_init(uv_loop_t* loop) {
 
   memset(&loop->poll_peer_sockets, 0, sizeof loop->poll_peer_sockets);
 
-  loop->channel = NULL;
-  RB_INIT(&loop->ares_handles);
-
   loop->active_tcp_streams = 0;
   loop->active_udp_streams = 0;
 
   loop->last_err = uv_ok_;
-
-  memset(&loop->counters, 0, sizeof loop->counters);
 }
 
 
