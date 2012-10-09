@@ -103,7 +103,9 @@ configure_file(src/msgpack/version.h.in
     ${CMAKE_CURRENT_BINARY_DIR}/msgpack/version.h 
     @ONLY)
 
-include_directories(src ../msgpack 
+include_directories(
+    src 
+    src/msgpack
     ${CMAKE_CURRENT_BINARY_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}/generated
