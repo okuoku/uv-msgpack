@@ -41,7 +41,7 @@ include_directories(
     )
 
 if(WIN32)
-    list(APPEND DEP_LIBS ws2_32)
+    list(APPEND DEP_LIBS ws2_32 psapi iphlpapi)
 else(UNIX)
     list(APPEND DEP_LIBS pthread m)
 endif()
@@ -62,11 +62,9 @@ add_library(uvmsgpack
     STATIC
     ${srcs})
 
-list(APPEND DEP_LIBS uvmsgpack)
-
 macro(add_sample nam)
     add_executable(${nam} ${ARGN})
-    target_link_libraries(${nam} ${DEP_LIBS})
+    target_link_libraries(${nam} uvmsgpack ${DEP_LIBS})
 endmacro(add_sample)
 
 if(UVMSGPACK_BUILD_SAMPLES)
