@@ -98,7 +98,7 @@ main(int ac, char* av){
     int r;
     msgpack_packer* pac;
     pac = uvm_new_packer();
-    r = uvm_start_server(server_cb,"0.0.0.0",12345,pac);
+    r = uvm_start_server(server_cb,"127.0.0.1",12345,pac);
     if(r){
         printf("Error!\n");
         return -1;
