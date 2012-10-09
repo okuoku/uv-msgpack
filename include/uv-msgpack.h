@@ -10,7 +10,7 @@ typedef enum {
     MESSAGE = 0,
     CONNECT,
     DISCONNECT,
-    ERROR,
+    ERR
 } uvm_reader_message_t;
 
 /* server callbacks */
