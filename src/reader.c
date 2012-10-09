@@ -24,7 +24,7 @@ read_cb(uv_stream_t* stream,ssize_t nread, uv_buf_t buf){
             msgpack_zone_free(msgpack_unpacked_release_zone(&cns->unpacked));
         }
     }else{
-        srv(stream, SERVER_DISCONNECT,0,0,0);
+        srv(stream, DISCONNECT,0,0,0);
     }
 }
 
@@ -41,7 +41,7 @@ uvm_start_reader(uvm_read_callback_t cb, uv_stream_t *target){
 }
 
 void
-internal_uvm_start_reader(uvm_read_callback_t cb, uv_stream_t *target,void *dat){
+uvm_start_reader_new(uvm_read_callback_t cb, uv_stream_t *target, void* dat){
     uvm_con_state* cns;
     cns = malloc(sizeof(uvm_con_state));
     target->data = cns;
@@ -63,8 +63,8 @@ listen_cb(uv_stream_t* server, int status){
     uv_tcp_init(uv_default_loop(), ns);
     uv_tcp_nodelay(ns, 1);
     uv_accept(server, (uv_stream_t *)ns);
-    internal_uvm_start_reader(srv, (uv_stream_t *)ns, cns->userdata);
-    srv((uv_stream_t *)ns, SERVER_CONNECT, NULL, cns->userdata, 0);
+    uvm_start_reader_new(srv, (uv_stream_t *)ns, cns->userdata);
+    srv((uv_stream_t *)ns, CONNECT, NULL, cns->userdata, 0);
 }
 
 int

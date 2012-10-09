@@ -51,12 +51,16 @@ handle_server_message(uv_stream_t* target, msgpack_packer* pac,
     int method_len;
     uint64_t seq; /* int32 in spec */
     msgpack_object* param;
+    printf("Message: ");
+    msgpack_object_print(stdout, *obj);
+    printf("\n");
+
     /* Every message should be a array */
     if(obj->type == MSGPACK_OBJECT_ARRAY){
         type = obj->via.array.ptr[0].via.i64;
         if(type == 0 /* Request */){
             seq = obj->via.array.ptr[1].via.u64;
-            method = (char*)&obj->via.array.ptr[2].via.raw.ptr;
+            method = (char*)obj->via.array.ptr[2].via.raw.ptr;
             method_len = obj->via.array.ptr[2].via.raw.size;
             param = &obj->via.array.ptr[3];
             dispatch(target,pac,seq,method,method_len,param);
@@ -76,10 +80,10 @@ server_cb(uv_stream_t* target,
           int status){
     msgpack_packer* pac = (msgpack_packer *)p;
     switch(msg){
-        case SERVER_CONNECT:
+        case CONNECT:
             printf("connect = %lx\n",(unsigned long)target);
             break;
-        case SERVER_DISCONNECT:
+        case DISCONNECT:
             printf("disconnect = %lx\n",(unsigned long)target);
             break;
         case MESSAGE:
@@ -94,7 +98,7 @@ server_cb(uv_stream_t* target,
 }
 
 int
-main(int ac, char* av){
+main(int ac, char** av){
     int r;
     msgpack_packer* pac;
     pac = uvm_new_packer();
@@ -104,4 +108,5 @@ main(int ac, char* av){
         return -1;
     }
     uv_run(uv_default_loop());
+    return 0;
 }

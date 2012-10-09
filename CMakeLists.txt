@@ -53,6 +53,8 @@ endif()
 
 # lib
 set(srcs
+    src/chime.c
+    src/client.c
     src/writer.c
     src/reader.c)
 
@@ -69,4 +71,5 @@ endmacro(add_sample)
 
 if(UVMSGPACK_BUILD_SAMPLES)
     add_sample(addserv samples/addserv.c)
+    add_sample(addclient samples/addclient.c)
 endif()

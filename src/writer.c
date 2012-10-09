@@ -50,6 +50,7 @@ packer(void* data,const char* buf,unsigned int len){
     memcpy(base,buf,len);
     pb->buf[pb->p] = uv_buf_init((char *)base,len);
     pb->p++;
+    return 0;
 }
 
 void
@@ -58,7 +59,7 @@ connect_cb(uv_connect_t* req, int bogus){
     uvm_con_state* cns;
     cb = (uvm_read_callback_t)req->data;
     cns = (uvm_con_state *)req->handle->data;
-    cb(req->handle, SERVER_CONNECT, NULL, cns->userdata, 0);
+    cb(req->handle, CONNECT, NULL, cns->userdata, 0);
     uvm_start_reader(cb,req->handle);
     free(req);
 }
@@ -101,6 +102,7 @@ uvm_write(uvm_write_callback_t cb, uv_stream_t* target,msgpack_packer* pac){
         pb->p = 0;
     }else{
         /* Error: Something wrong. We don't have any datagram */
+        abort();
         return -1;
     }
     return 0;
